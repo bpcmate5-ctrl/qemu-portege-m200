@@ -322,10 +322,11 @@ static void toshiba_apmc_write(void *opaque, hwaddr addr, uint64_t val, unsigned
     uint8_t cmd = val & 0xff;
     fprintf(stderr, ">>> [TOSHIBA SMM SMI TRIGGER PORT 0xB2] CMD=0x%02X <<<\n", cmd);
 
-    if (cmd == 0xc1) {
+    if (cmd == 0xc1 || cmd == 0x4d || cmd == 0x16 || cmd == 0xfe || cmd == 0xff) {
         /* Toshiba SMM Signature 'TX\x00\x01' in EAX */
         env->regs[R_EAX] = 0x74580001;
         env->regs[R_EBX] = 0x00000000;
+        env->regs[R_ECX] = 0x00000000;
         cpu_loop_exit(cpu);
     }
 }
