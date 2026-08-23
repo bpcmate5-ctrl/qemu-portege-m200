@@ -366,26 +366,6 @@ static const MemoryRegionOps toshiba_kbc_status_ops = {
 /* IVT Memory Intercept (0x00000000..0x000003FF) */
 static uint64_t toshiba_ivt_read(void *opaque, hwaddr addr, unsigned size)
 {
-    if (size == 4) {
-        switch (addr) {
-        case 0x20: return 0xf000feb0; /* INT 08h -> System BIOS Timer Tick */
-        case 0x24: return 0xf000d16d; /* INT 09h -> System BIOS Keyboard ISR */
-        case 0x40: return 0xf000f000; /* INT 10h -> System BIOS Video Services (Port 0x180) */
-        case 0x44: return 0xf000f84d; /* INT 11h -> Equipment List Services */
-        case 0x48: return 0xf000f841; /* INT 12h -> Memory Size Services */
-        case 0x4c: return 0xf000ec59; /* INT 13h -> Fixed Disk & Floppy Services */
-        case 0x50: return 0xf000e739; /* INT 14h -> Serial Communications */
-        case 0x54: return 0xf000f859; /* INT 15h -> System & ACPI E820 Services */
-        case 0x58: return 0xf000e82e; /* INT 16h -> Keyboard Input Services */
-        case 0x5c: return 0xf000efd2; /* INT 17h -> Parallel Printer Services */
-        case 0x60: return 0xf000e2c3; /* INT 18h -> ROM BASIC / Boot Failure */
-        case 0x64: return 0xf000e6f2; /* INT 19h -> Bootstrap OS Loader */
-        case 0x68: return 0xf000fe6e; /* INT 1Ah -> Real-Time Clock Services */
-        case 0x70: return 0xf000ff53; /* INT 1Ch -> User Timer Tick Hook */
-        case 0x78: return 0xf000efc7; /* INT 1Eh -> Floppy Parameter Table */
-        default: break;
-        }
-    }
     if (toshiba_system_ram && (addr + size) <= 1024) {
         uint64_t val = 0;
         memcpy(&val, toshiba_system_ram + addr, size);
@@ -1052,18 +1032,29 @@ static void m200_init(MachineState *machine)
                 /* Preload full 512KB ROM into RAM */
                 fseek(f, 0, SEEK_SET);
                 if (fread(ram, 1, 0x80000, f) != 0x80000) {}
-                /* Preload Module 2 System BIOS into 0xF0000 */
-                fseek(f, 0x20000, SEEK_SET);
+                /* Preload Module 2 Second 64KB (Module 3) into 0xF0000 */
+                fseek(f, 0x30000, SEEK_SET);
                 if (fread(memory_region_get_ram_ptr(shadow_ram_f0000), 1, 0x10000, f) == 0x10000) {
-                    /* Successfully preloaded System BIOS */
+                    /* Successfully preloaded System BIOS Second 64KB */
                 }
-                /* Place Boot Block reset jump at 0x000FFFF0 so CPU starts in Boot Block */
+                uint8_t *f0000_ptr = (uint8_t *)memory_region_get_ram_ptr(shadow_ram_f0000);
+                /* Preload authentic Boot Block GDT Table at 0x000FDE3A */
+                fseek(f, 0x7de3a, SEEK_SET);
+                if (fread(f0000_ptr + 0xde3a, 1, 0x130, f) == 0x130) {
+                    /* Successfully preloaded GDT table */
+                }
+                /* Preload authentic Boot Block LGDT pseudo-descriptor at 0x000F1E34 */
+                fseek(f, 0x7de34, SEEK_SET);
+                if (fread(f0000_ptr + 0x1e34, 1, 6, f) == 6) {
+                    /* Successfully preloaded LGDT descriptor */
+                }
+                /* Place authentic System BIOS direct Boot entry jump at 0x000FFFF0 */
                 uint8_t *ptr = (uint8_t *)memory_region_get_ram_ptr(shadow_ram_f0000);
                 ptr[0xfff0] = 0xea;
-                ptr[0xfff1] = 0xa0;
-                ptr[0xfff2] = 0x3f;
+                ptr[0xfff1] = 0xf0;
+                ptr[0xfff2] = 0x2b;
                 ptr[0xfff3] = 0x00;
-                ptr[0xfff4] = 0xfc;
+                ptr[0xfff4] = 0xf0; /* ljmp $0xF000, $0x2BF0 (Direct Boot Entry) */
                 fclose(f);
             }
             g_free(filename);
@@ -1154,7 +1145,18 @@ static void m200_init(MachineState *machine)
     ivt[0x08] = 0xf000feb0; /* F000:FEB0 (Authentic Toshiba System BIOS Timer Tick) */
     ivt[0x09] = 0xf000d16d; /* F000:D16D (Authentic Toshiba System BIOS Keyboard Handler) */
     ivt[0x10] = 0xf000f000; /* F000:F000 (INT 10h Video Service at Port 0x180) */
+    ivt[0x11] = 0xf000f84d; /* F000:F84D (Equipment List Services) */
+    ivt[0x12] = 0xf000f841; /* F000:F841 (Memory Size Services) */
+    ivt[0x13] = 0xf000ec59; /* F000:EC59 (Fixed Disk & Floppy Services) */
+    ivt[0x14] = 0xf000e739; /* F000:E739 (Serial Communications) */
+    ivt[0x15] = 0xf000f859; /* F000:F859 (System & ACPI E820 Services) */
+    ivt[0x16] = 0xf000e82e; /* F000:E82E (Keyboard Input Services) */
+    ivt[0x17] = 0xf000efd2; /* F000:EFD2 (Parallel Printer Services) */
+    ivt[0x18] = 0xf000e2c3; /* F000:E2C3 (ROM BASIC / Boot Failure) */
+    ivt[0x19] = 0xf000e6f2; /* F000:E6F2 (Bootstrap OS Loader) */
+    ivt[0x1a] = 0xf000fe6e; /* F000:FE6E (Real-Time Clock Services) */
     ivt[0x1c] = 0xf000ff53; /* F000:FF53 (User Timer Hook IRET) */
+    ivt[0x1e] = 0xf000efc7; /* F000:EFC7 (Floppy Parameter Table) */
 
     /* Install default stubs in Shadow RAM F0000 */
     uint8_t *f0000_ptr = (uint8_t *)memory_region_get_ram_ptr(shadow_ram_f0000);
