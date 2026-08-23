@@ -1256,7 +1256,7 @@ static void m200_machine_options(MachineClass *m)
     m->default_display = "std";
     m->default_nic = "e1000";
     m->default_cpu_type = X86_CPU_TYPE_NAME("pentium-m");
-    m->no_floppy = 1;
+    m->no_floppy = 0;
     m->max_cpus = 1; /* Single-core Pentium M */
 }
 
