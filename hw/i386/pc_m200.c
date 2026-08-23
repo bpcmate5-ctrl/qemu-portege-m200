@@ -263,6 +263,315 @@ static const MemoryRegionOps toshiba_kbc_status_ops = {
     },
 };
 
+/* IVT Memory Intercept (0x00000000..0x000003FF) */
+static uint8_t *toshiba_system_ram = NULL;
+
+static uint64_t toshiba_ivt_read(void *opaque, hwaddr addr, unsigned size)
+{
+    if (addr == 0x40 && size == 4) {
+        return 0xc000006f; /* INT 10h -> NVIDIA VBIOS */
+    }
+    if (addr == 0x20 && size == 4) {
+        return 0xf000feb0; /* INT 08h -> System BIOS Timer */
+    }
+    if (addr == 0x24 && size == 4) {
+        return 0xf000d16d; /* INT 09h -> System BIOS Keyboard */
+    }
+    if (toshiba_system_ram && (addr + size) <= 1024) {
+        uint64_t val = 0;
+        memcpy(&val, toshiba_system_ram + addr, size);
+        return val;
+    }
+    return 0;
+}
+
+static void toshiba_ivt_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+{
+    if (toshiba_system_ram && (addr + size) <= 1024) {
+        memcpy(toshiba_system_ram + addr, &val, size);
+    }
+}
+
+static const MemoryRegionOps toshiba_ivt_ops = {
+    .read = toshiba_ivt_read,
+    .write = toshiba_ivt_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 4,
+    },
+};
+
+static void toshiba_vga_set_char(int row, int col, uint8_t ch, uint8_t attr)
+{
+    if (row < 0 || row >= 25 || col < 0 || col >= 80) return;
+    if (toshiba_system_ram) {
+        toshiba_system_ram[0xb8000 + (row * 80 + col) * 2] = ch;
+        toshiba_system_ram[0xb8000 + (row * 80 + col) * 2 + 1] = attr;
+    }
+    nv34m_vga_write_text(row, col, ch, attr);
+}
+
+static void toshiba_vga_int10_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+{
+    CPUState *cpu = first_cpu;
+    if (!cpu || !toshiba_system_ram) return;
+    X86CPU *x86_cpu = X86_CPU(cpu);
+    CPUX86State *env = &x86_cpu->env;
+
+    uint8_t ah = (env->regs[R_EAX] >> 8) & 0xff;
+    uint8_t al = env->regs[R_EAX] & 0xff;
+    uint8_t bh = (env->regs[R_EBX] >> 8) & 0xff;
+    uint8_t bl = env->regs[R_EBX] & 0xff;
+    uint16_t cx = env->regs[R_ECX] & 0xffff;
+    uint8_t dh = (env->regs[R_EDX] >> 8) & 0xff;
+    uint8_t dl = env->regs[R_EDX] & 0xff;
+
+    printf(">>> [INT 10h CALLED] AH=0x%02X AL=0x%02X BX=0x%04X CX=0x%04X DX=0x%04X\n",
+           ah, al, (uint16_t)env->regs[R_EBX], cx, (uint16_t)env->regs[R_EDX]);
+
+    fprintf(stderr, ">>> [INT 10h] AH=0x%02X AL=0x%02X BH=0x%02X BL=0x%02X CX=0x%04X DX=0x%04X\n",
+            ah, al, bh, bl, cx, (dh << 8) | dl);
+
+    switch (ah) {
+    case 0x00: /* Set Video Mode */
+        toshiba_system_ram[0x449] = al & 0x7f;
+        *(uint16_t *)(toshiba_system_ram + 0x44a) = 80;
+        toshiba_system_ram[0x484] = 24;
+        *(uint16_t *)(toshiba_system_ram + 0x450) = 0x0000;
+        nv34m_vga_clear_screen(0x07);
+        env->regs[R_EAX] = (env->regs[R_EAX] & ~0xff) | 0x30;
+        break;
+
+    case 0x01: /* Set Cursor Type */
+        *(uint16_t *)(toshiba_system_ram + 0x460) = cx;
+        break;
+
+    case 0x02: /* Set Cursor Position */
+        toshiba_system_ram[0x450 + ((bh & 7) * 2)] = dl;
+        toshiba_system_ram[0x451 + ((bh & 7) * 2)] = dh;
+        break;
+
+    case 0x03: /* Get Cursor Position */
+        dl = toshiba_system_ram[0x450 + ((bh & 7) * 2)];
+        dh = toshiba_system_ram[0x451 + ((bh & 7) * 2)];
+        env->regs[R_EDX] = (env->regs[R_EDX] & ~0xffff) | (dh << 8) | dl;
+        env->regs[R_ECX] = (env->regs[R_ECX] & ~0xffff) | 0x0607;
+        env->regs[R_EAX] = (env->regs[R_EAX] & ~0xffff);
+        break;
+
+    case 0x06: /* Scroll Window Up */
+    case 0x07: { /* Scroll Window Down */
+        uint8_t lines = al;
+        uint8_t attr = bh;
+        uint8_t top = (env->regs[R_ECX] >> 8) & 0xff;
+        uint8_t left = env->regs[R_ECX] & 0xff;
+        uint8_t bottom = dh;
+        uint8_t right = dl;
+
+        if (lines == 0 || lines >= (bottom - top + 1)) {
+            for (int r = top; r <= bottom && r < 25; r++) {
+                for (int c = left; c <= right && c < 80; c++) {
+                    toshiba_vga_set_char(r, c, ' ', attr);
+                }
+            }
+        } else if (ah == 0x06) {
+            for (int r = top; r <= bottom - lines && r < 25; r++) {
+                for (int c = left; c <= right && c < 80; c++) {
+                    uint8_t ch = toshiba_system_ram[0xb8000 + ((r + lines) * 80 + c) * 2];
+                    uint8_t at = toshiba_system_ram[0xb8000 + ((r + lines) * 80 + c) * 2 + 1];
+                    toshiba_vga_set_char(r, c, ch, at);
+                }
+            }
+            for (int r = bottom - lines + 1; r <= bottom && r < 25; r++) {
+                for (int c = left; c <= right && c < 80; c++) {
+                    toshiba_vga_set_char(r, c, ' ', attr);
+                }
+            }
+        }
+        break;
+    }
+
+    case 0x08: { /* Read Character and Attribute at Cursor */
+        dl = toshiba_system_ram[0x450 + ((bh & 7) * 2)];
+        dh = toshiba_system_ram[0x451 + ((bh & 7) * 2)];
+        if (dh < 25 && dl < 80) {
+            uint8_t ch = toshiba_system_ram[0xb8000 + (dh * 80 + dl) * 2];
+            uint8_t at = toshiba_system_ram[0xb8000 + (dh * 80 + dl) * 2 + 1];
+            env->regs[R_EAX] = (env->regs[R_EAX] & ~0xffff) | (at << 8) | ch;
+        }
+        break;
+    }
+
+    case 0x09: /* Write Character and Attribute */
+    case 0x0a: { /* Write Character Only */
+        dl = toshiba_system_ram[0x450 + ((bh & 7) * 2)];
+        dh = toshiba_system_ram[0x451 + ((bh & 7) * 2)];
+        for (int k = 0; k < cx && (dl + k) < 80 && dh < 25; k++) {
+            uint8_t attr = (ah == 0x09) ? bl : toshiba_system_ram[0xb8000 + (dh * 80 + dl + k) * 2 + 1];
+            toshiba_vga_set_char(dh, dl + k, al, attr);
+        }
+        break;
+    }
+
+    case 0x0e: { /* Teletype (TTY) Character Output */
+        dl = toshiba_system_ram[0x450];
+        dh = toshiba_system_ram[0x451];
+        if (al == '\r') {
+            dl = 0;
+        } else if (al == '\n') {
+            dh++;
+            if (dh >= 25) {
+                for (int r = 0; r < 24; r++) {
+                    for (int c = 0; c < 80; c++) {
+                        uint8_t ch = toshiba_system_ram[0xb8000 + ((r + 1) * 80 + c) * 2];
+                        uint8_t at = toshiba_system_ram[0xb8000 + ((r + 1) * 80 + c) * 2 + 1];
+                        toshiba_vga_set_char(r, c, ch, at);
+                    }
+                }
+                for (int c = 0; c < 80; c++) {
+                    toshiba_vga_set_char(24, c, ' ', 0x07);
+                }
+                dh = 24;
+            }
+        } else if (al == '\b') {
+            if (dl > 0) dl--;
+        } else if (al == '\a') {
+            /* Beep */
+        } else {
+            if (dh < 25 && dl < 80) {
+                toshiba_vga_set_char(dh, dl, al, bl ? bl : 0x07);
+            }
+            dl++;
+            if (dl >= 80) {
+                dl = 0;
+                dh++;
+                if (dh >= 25) {
+                    for (int r = 0; r < 24; r++) {
+                        for (int c = 0; c < 80; c++) {
+                            uint8_t ch = toshiba_system_ram[0xb8000 + ((r + 1) * 80 + c) * 2];
+                            uint8_t at = toshiba_system_ram[0xb8000 + ((r + 1) * 80 + c) * 2 + 1];
+                            toshiba_vga_set_char(r, c, ch, at);
+                        }
+                    }
+                    for (int c = 0; c < 80; c++) {
+                        toshiba_vga_set_char(24, c, ' ', 0x07);
+                    }
+                    dh = 24;
+                }
+            }
+        }
+        toshiba_system_ram[0x450] = dl;
+        toshiba_system_ram[0x451] = dh;
+        break;
+    }
+
+    case 0x0f: /* Get Video Mode */
+        env->regs[R_EAX] = (env->regs[R_EAX] & ~0xffff) | (80 << 8) | (toshiba_system_ram[0x449] & 0x7f);
+        env->regs[R_EBX] = (env->regs[R_EBX] & ~0xff00);
+        break;
+
+    case 0x11: /* Font Services */
+        if (al == 0x30) {
+            /* Return 8x16 font pointer at F000:FA6E */
+            env->regs[R_ECX] = (env->regs[R_ECX] & ~0xffff) | 16;
+            env->regs[R_EDX] = (env->regs[R_EDX] & ~0xffff) | 24;
+            env->regs[R_EBP] = (env->regs[R_EBP] & ~0xffff) | 0xfa6e;
+            env->segs[R_ES].base = 0x000f0000;
+            env->segs[R_ES].selector = 0xf000;
+        }
+        break;
+
+    case 0x12: /* Alternate Select */
+        if (bl == 0x10) {
+            env->regs[R_EBX] = (env->regs[R_EBX] & ~0xffff) | 0x0003;
+            env->regs[R_ECX] = (env->regs[R_ECX] & ~0xffff) | 0x0009;
+        }
+        break;
+
+    case 0x13: { /* Write String */
+        hwaddr str_phys = env->segs[R_ES].base + (env->regs[R_EBP] & 0xffff);
+        for (int k = 0; k < cx && (dl + k) < 80 && dh < 25; k++) {
+            uint8_t c = toshiba_system_ram[str_phys + k];
+            toshiba_vga_set_char(dh, dl + k, c, bl ? bl : 0x07);
+        }
+        if (al & 1) {
+            toshiba_system_ram[0x450] = (dl + cx) % 80;
+            toshiba_system_ram[0x451] = dh + (dl + cx) / 80;
+        }
+        break;
+    }
+
+    case 0x4f: { /* VESA VBE Services */
+        switch (al) {
+        case 0x00: { /* Return VBE Controller Information */
+            hwaddr vbe_info = env->segs[R_ES].base + (env->regs[R_EDI] & 0xffff);
+            if (toshiba_system_ram && (vbe_info + 512) <= (16 * MiB)) {
+                memset(toshiba_system_ram + vbe_info, 0, 512);
+                memcpy(toshiba_system_ram + vbe_info, "VESA", 4);
+                *(uint16_t *)(toshiba_system_ram + vbe_info + 4) = 0x0300; /* VBE 3.0 */
+                *(uint32_t *)(toshiba_system_ram + vbe_info + 6) = 0xc000001e; /* OEM String: 'IBM VGA Compatible' */
+                *(uint32_t *)(toshiba_system_ram + vbe_info + 10) = 0x00000001; /* Capabilities: 8-bit DAC */
+                /* Video mode pointer at 0xC000:0x0080 */
+                static const uint16_t modes[] = {0x0101, 0x0103, 0x0105, 0x0112, 0x0115, 0x0118, 0xffff};
+                memcpy(toshiba_system_ram + vbe_info + 14, modes, sizeof(modes));
+                *(uint16_t *)(toshiba_system_ram + vbe_info + 18) = 512; /* 32MB VRAM (512 * 64KB blocks) */
+            }
+            env->regs[R_EAX] = (env->regs[R_EAX] & ~0xffff) | 0x004f;
+            break;
+        }
+        case 0x01: { /* Return VBE Mode Information */
+            hwaddr mode_info = env->segs[R_ES].base + (env->regs[R_EDI] & 0xffff);
+            if (toshiba_system_ram && (mode_info + 256) <= (16 * MiB)) {
+                memset(toshiba_system_ram + mode_info, 0, 256);
+                *(uint16_t *)(toshiba_system_ram + mode_info + 0) = 0x00bb; /* Mode attributes */
+                toshiba_system_ram[mode_info + 2] = 0x07;                   /* Window A attributes (Read/Write) */
+                *(uint16_t *)(toshiba_system_ram + mode_info + 4) = 64;     /* 64K window granularity */
+                *(uint16_t *)(toshiba_system_ram + mode_info + 6) = 64;     /* 64K window size */
+                *(uint16_t *)(toshiba_system_ram + mode_info + 8) = 0xa000; /* Window A start segment */
+                *(uint16_t *)(toshiba_system_ram + mode_info + 16) = 640;   /* Bytes per scanline */
+                *(uint16_t *)(toshiba_system_ram + mode_info + 18) = 640;   /* X Resolution */
+                *(uint16_t *)(toshiba_system_ram + mode_info + 20) = 480;   /* Y Resolution */
+                toshiba_system_ram[mode_info + 24] = 1;                     /* Number of planes */
+                toshiba_system_ram[mode_info + 25] = 8;                     /* 8 bits per pixel */
+                toshiba_system_ram[mode_info + 27] = 4;                     /* Packed pixel memory model */
+                *(uint32_t *)(toshiba_system_ram + mode_info + 40) = 0xfd000000; /* Linear Frame Buffer Base */
+            }
+            env->regs[R_EAX] = (env->regs[R_EAX] & ~0xffff) | 0x004f;
+            break;
+        }
+        case 0x02: { /* Set VBE Mode */
+            toshiba_system_ram[0x449] = 0x5f; /* VBE Mode */
+            env->regs[R_EAX] = (env->regs[R_EAX] & ~0xffff) | 0x004f;
+            break;
+        }
+        default:
+            env->regs[R_EAX] = (env->regs[R_EAX] & ~0xffff) | 0x004f;
+            break;
+        }
+        break;
+    }
+
+    default:
+        break;
+    }
+}
+
+static uint64_t toshiba_vga_int10_read(void *opaque, hwaddr addr, unsigned size)
+{
+    return 0;
+}
+
+static const MemoryRegionOps toshiba_vga_int10_ops = {
+    .read = toshiba_vga_int10_read,
+    .write = toshiba_vga_int10_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 2,
+    },
+};
+
 /* Intel ICH4-M SMBus Controller (Base 0xD880) & DDR SDRAM SPD EEPROM */
 typedef struct ToshibaSMBusState {
     uint8_t hst_sts;
@@ -605,21 +914,95 @@ static void m200_init(MachineState *machine)
     }
     memory_region_add_subregion_overlap(system_memory, 0xf0000, shadow_ram_f0000, 1000);
 
-    /* Initialize BDA Reset Word at 0x0472 to 0x0000 (Normal Boot) */
-    memset(memory_region_get_ram_ptr(machine->ram) + 0x472, 0, 2);
+    /* Map Video BIOS INT 10h Service Port (0x180) */
+    MemoryRegion *vga_int10_io = g_new(MemoryRegion, 1);
+    memory_region_init_io(vga_int10_io, OBJECT(machine), &toshiba_vga_int10_ops, NULL,
+                          "m200-vga-int10", 2);
+    memory_region_add_subregion_overlap(system_io, 0x180, vga_int10_io, 100);
 
-    /* Initialize Interrupt Vector Table (IVT) with default IRET (F000:FF53) and INT 10h (C000:0050) */
+    /* Initialize BDA (0x00000400..0x000004FF) and System Parameters */
+    uint8_t *ram_base = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
+    *(uint16_t *)(ram_base + 0x400) = 0x03f8; /* COM1 */
+    *(uint16_t *)(ram_base + 0x402) = 0x02f8; /* COM2 */
+    *(uint16_t *)(ram_base + 0x404) = 0x03e8; /* COM3 */
+    *(uint16_t *)(ram_base + 0x406) = 0x0338; /* COM4 (Wacom Tablet Digitizer) */
+    *(uint16_t *)(ram_base + 0x408) = 0x0378; /* LPT1 */
+    *(uint16_t *)(ram_base + 0x410) = 0x4423; /* Equipment word */
+    *(uint16_t *)(ram_base + 0x413) = 640;    /* 640KB Base Memory */
+    ram_base[0x449] = 0x03;                   /* Mode 03h (80x25 Color Text) */
+    *(uint16_t *)(ram_base + 0x44a) = 80;     /* 80 Columns */
+    *(uint16_t *)(ram_base + 0x44c) = 4096;   /* Page size */
+    memset(ram_base + 0x450, 0, 16);          /* Cursor positions */
+    *(uint32_t *)(ram_base + 0x46c) = 0;      /* Timer ticks */
+    *(uint16_t *)(ram_base + 0x472) = 0x0000; /* Reset word (Normal Boot) */
+    ram_base[0x484] = 24;                     /* Rows minus 1 */
+    ram_base[0x485] = 16;                     /* Character height 16 */
+
+    /* Initialize System Parameter Block at 0x00000800..0x000008FF */
+    *(uint16_t *)(ram_base + 0x818) = 0xe05b;
+    *(uint16_t *)(ram_base + 0x81a) = 0xf000;
+    *(uint16_t *)(ram_base + 0x82c) = 0x1000;
+    *(uint32_t *)(ram_base + 0x83c) = 0x000f0000;
+    *(uint32_t *)(ram_base + 0x842) = 0x00007000;
+
+    /* Initialize Interrupt Vector Table (IVT) Overlay (0x00000000..0x000003FF) */
+    MemoryRegion *ivt_mr = g_new(MemoryRegion, 1);
+    memory_region_init_io(ivt_mr, OBJECT(machine), &toshiba_ivt_ops, NULL, "m200-ivt", 1024);
+    memory_region_add_subregion_overlap(system_memory, 0x00000000, ivt_mr, 1000);
+
     uint32_t *ivt = (uint32_t *)memory_region_get_ram_ptr(machine->ram);
     for (i = 0; i < 256; i++) {
-        ivt[i] = 0xf000ff53; /* F000:FF53 (IRET) */
+        ivt[i] = 0xf000ff53; /* F000:FF53 (Default IRET) */
     }
-    ivt[0x10] = 0xc0000050; /* C000:0050 (NVIDIA VBIOS INT 10h) */
+    /* Point Master PIC hardware IRQ 0..7 (INT 08h..0Fh) to EOI handler at F000:FF40 */
+    for (i = 0x08; i <= 0x0f; i++) {
+        ivt[i] = 0xf000ff40;
+    }
+    /* Point Slave PIC hardware IRQ 8..15 (INT 70h..77h) to EOI handler at F000:FF30 */
+    for (i = 0x70; i <= 0x77; i++) {
+        ivt[i] = 0xf000ff30;
+    }
+    ivt[0x08] = 0xf000feb0; /* F000:FEB0 (Authentic Toshiba System BIOS Timer Tick) */
+    ivt[0x09] = 0xf000d16d; /* F000:D16D (Authentic Toshiba System BIOS Keyboard Handler) */
+    ivt[0x10] = 0xc000006f; /* C000:006F (NVIDIA VBIOS INT 10h Video Service) */
+    ivt[0x1c] = 0xf000ff53; /* F000:FF53 (User Timer Hook IRET) */
+
+    /* Install default stubs in Shadow RAM F0000 */
+    uint8_t *f0000_ptr = (uint8_t *)memory_region_get_ram_ptr(shadow_ram_f0000);
+    /* F000:FF53 -> iret */
+    f0000_ptr[0xff53] = 0xcf;
+    /* F000:FF40 -> push %ax; mov $0x20, %al; out %al, $0x20; pop %ax; iret */
+    f0000_ptr[0xff40] = 0x50;
+    f0000_ptr[0xff41] = 0xb0;
+    f0000_ptr[0xff42] = 0x20;
+    f0000_ptr[0xff43] = 0xe6;
+    f0000_ptr[0xff44] = 0x20;
+    f0000_ptr[0xff45] = 0x58;
+    f0000_ptr[0xff46] = 0xcf;
+    /* F000:FF30 -> push %ax; mov $0x20, %al; out %al, $0xa0; out %al, $0x20; pop %ax; iret */
+    f0000_ptr[0xff30] = 0x50;
+    f0000_ptr[0xff31] = 0xb0;
+    f0000_ptr[0xff32] = 0x20;
+    f0000_ptr[0xff33] = 0xe6;
+    f0000_ptr[0xff34] = 0xa0;
+    f0000_ptr[0xff35] = 0xe6;
+    f0000_ptr[0xff36] = 0x20;
+    f0000_ptr[0xff37] = 0x58;
+    f0000_ptr[0xff38] = 0xcf;
+
+    /* Install INT 10h ROM Stub at 0xF000:F000: mov $0x0180, %dx; out %al, (%dx); iret */
+    f0000_ptr[0xf000] = 0xba;
+    f0000_ptr[0xf001] = 0x80;
+    f0000_ptr[0xf002] = 0x01;
+    f0000_ptr[0xf003] = 0xee;
+    f0000_ptr[0xf004] = 0xcf;
 
     /* Place safety IRET at 0x00000000 so any jumps to 0x0000:0000 return cleanly */
     *(uint8_t *)memory_region_get_ram_ptr(machine->ram) = 0xcf;
 
     /* Initialize BDA Video Variables (0x0040:0x0049..0x0089) for VGA Color Display */
-    uint8_t *ram = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
+    toshiba_system_ram = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
+    uint8_t *ram = toshiba_system_ram;
     *(uint16_t *)(ram + 0x410) = 0x0021; /* Equipment: 80x25 color display, floppy present */
     ram[0x449] = 0x03;                   /* Video mode 03h (80x25 color text) */
     *(uint16_t *)(ram + 0x44a) = 80;     /* 80 columns */

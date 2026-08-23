@@ -19,4 +19,7 @@
 
 #define TYPE_NV34M_VGA "nv34m-vga"
 
+void nv34m_vga_write_text(int row, int col, uint8_t ch, uint8_t attr);
+void nv34m_vga_clear_screen(uint8_t attr);
+
 #endif

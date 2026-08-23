@@ -31,6 +31,7 @@
 #include "vga_font8x16.h"
 #include "qemu/timer.h"
 #include "vga_regs.h"
+#include "ui/input.h"
 
 #define NV34M_CHIP_ID     0x034800b1 /* NV34 A1 per M200 hardware dump */
 #define NV34M_MMIO_SIZE   (16 * MiB)
@@ -86,6 +87,8 @@ struct NV34MState {
 
     uint8_t *ramin_buf;
 };
+
+static NV34MState *global_nv34m_state = NULL;
 
 static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
@@ -319,14 +322,36 @@ static void nv34m_reset(DeviceState *dev)
     };
     memcpy(s->vga.palette, default_vga_palette, sizeof(default_vga_palette));
 
-    /* Load standard 8x16 font into VRAM Plane 2 */
+    /* Initialize VRAM Text Buffer (Planes 0 & 1) and Font (Plane 2) */
     if (s->vga.vram_ptr) {
+        for (int k = 0; k < 80 * 25; k++) {
+            s->vga.vram_ptr[k * 4 + 0] = ' ';
+            s->vga.vram_ptr[k * 4 + 1] = 0x07;
+        }
         for (int c = 0; c < 256; c++) {
             for (int row = 0; row < 16; row++) {
                 s->vga.vram_ptr[(c * 32 + row) * 4 + 2] = vga_font8x16[c * 16 + row];
             }
         }
-        memset(s->vga.vram_ptr, 0, 80 * 25 * 4);
+    }
+}
+
+void nv34m_vga_write_text(int row, int col, uint8_t ch, uint8_t attr)
+{
+    if (!global_nv34m_state || !global_nv34m_state->vga.vram_ptr) return;
+    if (row < 0 || row >= 25 || col < 0 || col >= 80) return;
+    int idx = (row * 80 + col) * 4;
+    global_nv34m_state->vga.vram_ptr[idx + 0] = ch;
+    global_nv34m_state->vga.vram_ptr[idx + 1] = attr;
+}
+
+void nv34m_vga_clear_screen(uint8_t attr)
+{
+    if (!global_nv34m_state || !global_nv34m_state->vga.vram_ptr) return;
+    for (int r = 0; r < 25; r++) {
+        for (int c = 0; c < 80; c++) {
+            nv34m_vga_write_text(r, c, ' ', attr);
+        }
     }
 }
 
@@ -334,6 +359,8 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
 {
     NV34MState *s = NV34M_VGA(dev);
     VGACommonState *vga = &s->vga;
+
+    global_nv34m_state = s;
 
     vga->vram_size_mb = 32;
     if (!vga_common_init(vga, OBJECT(dev), errp)) {
@@ -360,7 +387,6 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
 
     /* Interrupt routing */
     pci_config_set_interrupt_pin(dev->config, 1); /* Pin A */
-
 }
 
 static void nv34m_exit(PCIDevice *dev)
