@@ -58,6 +58,8 @@
 
 /* Supported chipsets: */
 #include "hw/southbridge/ich9.h"
+#include "hw/southbridge/ich4m.h"
+#include "hw/pci-host/i855pm.h"
 #include "hw/acpi/pcihp.h"
 #include "hw/i386/fw_cfg.h"
 #include "hw/i386/pc.h"
@@ -197,7 +199,8 @@ static void acpi_get_pm_info(MachineState *machine, AcpiPmInfo *pm)
 {
     Object *piix = object_resolve_type_unambiguous(TYPE_PIIX4_PM, NULL);
     Object *lpc = object_resolve_type_unambiguous(TYPE_ICH9_LPC_DEVICE, NULL);
-    Object *obj = piix ? piix : lpc;
+    Object *ich4m = object_resolve_type_unambiguous(TYPE_ICH4M_LPC_DEVICE, NULL);
+    Object *obj = piix ? piix : (lpc ? lpc : ich4m);
     QObject *o;
     pm->cpu_hp_io_base = 0;
     pm->pcihp_io_base = 0;
@@ -225,6 +228,13 @@ static void acpi_get_pm_info(MachineState *machine, AcpiPmInfo *pm)
             !!(smi_features & BIT_ULL(ICH9_LPC_SMI_F_CPU_HOTPLUG_BIT));
         pm->smi_on_cpu_unplug =
             !!(smi_features & BIT_ULL(ICH9_LPC_SMI_F_CPU_HOT_UNPLUG_BIT));
+    }
+    if (ich4m) {
+        struct AcpiGenericAddress r = { .space_id = AML_AS_SYSTEM_IO,
+            .bit_width = 8, .address = ICH4M_RST_CNT_IOPORT };
+        pm->fadt.reset_reg = r;
+        pm->fadt.reset_val = 0x4;
+        pm->fadt.flags |= 1 << ACPI_FADT_F_RESET_REG_SUP;
     }
     pm->pcihp_io_base =
         object_property_get_uint(obj, ACPI_PCIHP_IO_BASE_PROP, NULL);
@@ -281,6 +291,9 @@ Object *acpi_get_i386_pci_host(void)
     host = PCI_HOST_BRIDGE(object_resolve_path("/machine/i440fx", NULL));
     if (!host) {
         host = PCI_HOST_BRIDGE(object_resolve_path("/machine/q35", NULL));
+    }
+    if (!host) {
+        host = PCI_HOST_BRIDGE(object_resolve_path("/machine/i855pm", NULL));
     }
 
     return OBJECT(host);
@@ -853,7 +866,10 @@ build_dsdt(GArray *table_data, BIOSLinker *linker,
 {
     Object *i440fx = object_resolve_type_unambiguous(TYPE_I440FX_PCI_HOST_BRIDGE,
                                                      NULL);
+    Object *i855pm = object_resolve_type_unambiguous(TYPE_I855PM_HOST_DEVICE,
+                                                     NULL);
     Object *q35 = object_resolve_type_unambiguous(TYPE_Q35_HOST_DEVICE, NULL);
+    bool is_pci = !!i440fx || !!i855pm;
     CrsRangeEntry *entry;
     Aml *dsdt, *sb_scope, *scope, *dev, *method, *field, *pkg, *crs;
     CrsRangeSet crs_range_set;
@@ -874,13 +890,13 @@ build_dsdt(GArray *table_data, BIOSLinker *linker,
     AcpiTable table = { .sig = "DSDT", .rev = 1, .oem_id = x86ms->oem_id,
                         .oem_table_id = x86ms->oem_table_id };
 
-    assert(!!i440fx != !!q35);
+    assert(is_pci != !!q35);
 
     acpi_table_begin(&table, table_data);
     dsdt = init_aml_allocator();
 
     build_dbg_aml(dsdt);
-    if (i440fx) {
+    if (is_pci) {
         sb_scope = aml_scope("_SB");
         dev = aml_device("PCI0");
         aml_append(dev, aml_name_decl("_HID", aml_eisaid("PNP0A03")));

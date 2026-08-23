@@ -563,6 +563,13 @@ config ASPEED_SOC
     select FSI_APB2OPB_ASPEED
     select AT24C
     select PCI_EXPRESS
+
+config PCI_EXPRESS_ASPEED
+    bool
+
+config ASPEED_SOC_BOARDS
+    bool
+    depends on ASPEED_SOC
     select PCI_EXPRESS_ASPEED
 
 config MPS2

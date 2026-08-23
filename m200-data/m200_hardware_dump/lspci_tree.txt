@@ -1,0 +1,14 @@
+-[0000:00]-+-00.0  Intel Corporation 82855PM Processor to I/O Controller
+           +-01.0-[01]----00.0  NVIDIA Corporation NV34M [GeForce FX Go5200 32M/64M]
+           +-1d.0  Intel Corporation 82801DB/DBL/DBM (ICH4/ICH4-L/ICH4-M) USB UHCI Controller #1
+           +-1d.1  Intel Corporation 82801DB/DBL/DBM (ICH4/ICH4-L/ICH4-M) USB UHCI Controller #2
+           +-1d.2  Intel Corporation 82801DB/DBL/DBM (ICH4/ICH4-L/ICH4-M) USB UHCI Controller #3
+           +-1d.7  Intel Corporation 82801DB/DBM (ICH4/ICH4-M) USB2 EHCI Controller
+           +-1e.0-[02-04]--+-05.0  Intel Corporation PRO/Wireless 2200BG [Calexico2] Network Connection
+           |               +-08.0  Intel Corporation 82801DB PRO/100 VE (MOB) Ethernet Controller
+           |               +-0b.0-[03]--
+           |               \-0d.0  Toshiba Corporation SD TypA Controller
+           +-1f.0  Intel Corporation 82801DBM (ICH4-M) LPC Interface Bridge
+           +-1f.1  Intel Corporation 82801DBM (ICH4-M) IDE Controller
+           +-1f.5  Intel Corporation 82801DB/DBL/DBM (ICH4/ICH4-L/ICH4-M) AC'97 Audio Controller
+           \-1f.6  Intel Corporation 82801DB/DBL/DBM (ICH4/ICH4-L/ICH4-M) AC'97 Modem Controller

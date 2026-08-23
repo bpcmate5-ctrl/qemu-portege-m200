@@ -1,0 +1,4 @@
+/dev/ttyS0, UART: 16550A, Port: 0x0338, IRQ: 4
+/dev/ttyS1, UART: unknown, Port: 0x02f8, IRQ: 3
+/dev/ttyS2, UART: unknown, Port: 0x03e8, IRQ: 4
+/dev/ttyS3, UART: unknown, Port: 0x02e8, IRQ: 3

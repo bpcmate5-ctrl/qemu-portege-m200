@@ -868,6 +868,11 @@ void x86_cpu_vendor_words2str(char *dst, uint32_t vendor1,
           CPUID_MTRR | CPUID_PGE | CPUID_MCA | CPUID_CMOV | CPUID_PAT | \
           CPUID_PSE36 | CPUID_FXSR)
 #define PENTIUM3_FEATURES (PENTIUM2_FEATURES | CPUID_SSE)
+#define PENTIUMM_FEATURES (CPUID_FP87 | CPUID_VME | CPUID_DE | CPUID_PSE | \
+    CPUID_TSC | CPUID_MSR | CPUID_PAE | CPUID_MCE | CPUID_CX8 | CPUID_APIC | \
+    CPUID_SEP | CPUID_MTRR | CPUID_PGE | CPUID_MCA | CPUID_CMOV | CPUID_PAT | \
+    CPUID_PSE36 | CPUID_CLFLUSH | CPUID_DTS | CPUID_ACPI | CPUID_MMX | \
+    CPUID_FXSR | CPUID_SSE | CPUID_SSE2 | CPUID_SS | CPUID_TM | CPUID_PBE)
 #define PPRO_FEATURES (CPUID_FP87 | CPUID_DE | CPUID_PSE | CPUID_TSC | \
           CPUID_MSR | CPUID_MCE | CPUID_CX8 | CPUID_PGE | CPUID_CMOV | \
           CPUID_PAT | CPUID_FXSR | CPUID_MMX | CPUID_SSE | CPUID_SSE2 | \
@@ -3704,6 +3709,40 @@ static const X86CPUDefinition builtin_x86_defs[] = {
             PENTIUM3_FEATURES,
         .xlevel = 0,
         .model_id = "",
+        .cache_info = &legacy_intel_cpuid2_cache_info,
+    },
+    {
+        .name = "pentium-m",
+        .level = 2,
+        .vendor = CPUID_VENDOR_INTEL,
+        .family = 6,
+        .model = 13,
+        .stepping = 8,
+        .features[FEAT_1_EDX] =
+            PENTIUMM_FEATURES,
+        .features[FEAT_1_ECX] =
+            CPUID_EXT_EST | CPUID_EXT_TM2,
+        .features[FEAT_8000_0001_EDX] =
+            CPUID_EXT2_NX,
+        .xlevel = 0x80000008,
+        .model_id = "Intel(R) Pentium(R) M processor 1.60GHz",
+        .cache_info = &legacy_intel_cpuid2_cache_info,
+    },
+    {
+        .name = "pentium-m-740",
+        .level = 2,
+        .vendor = CPUID_VENDOR_INTEL,
+        .family = 6,
+        .model = 13,
+        .stepping = 8,
+        .features[FEAT_1_EDX] =
+            PENTIUMM_FEATURES,
+        .features[FEAT_1_ECX] =
+            CPUID_EXT_EST | CPUID_EXT_TM2,
+        .features[FEAT_8000_0001_EDX] =
+            CPUID_EXT2_NX,
+        .xlevel = 0x80000008,
+        .model_id = "Intel(R) Pentium(R) M processor 1.73GHz",
         .cache_info = &legacy_intel_cpuid2_cache_info,
     },
     {

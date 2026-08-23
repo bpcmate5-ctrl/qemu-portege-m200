@@ -59,6 +59,12 @@ config VMWARE_VGA
     depends on PCI
     select VGA
 
+config NV34M_VGA
+    bool
+    default y if PCI_DEVICES && PC_PCI
+    depends on PCI
+    select VGA
+
 config BOCHS_DISPLAY
     bool
     default y if PCI_DEVICES

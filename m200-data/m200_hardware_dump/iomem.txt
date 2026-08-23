@@ -1,0 +1,49 @@
+00000000-00000fff : Reserved
+00001000-0009fbff : System RAM
+0009fc00-0009ffff : Reserved
+000a0000-000bffff : Video RAM area
+000c0000-000cffff : Video ROM
+000e0000-000eedff : Reserved
+000eee00-000eefff : ACPI Non-volatile Storage
+000ef000-000fffff : Reserved
+  000f0000-000fffff : System ROM
+00100000-7ffbffff : System RAM
+  1b000000-1b932ebf : Kernel code
+  1b933000-1bc4ffff : Kernel rodata
+  1bc50000-1bd8c57f : Kernel data
+  1be92000-1bf08fff : Kernel bss
+7ffc0000-7ffcffff : Reserved
+  7ffc0000-7ffcffff : pnp 00:00
+7ffd0000-7ffdffff : ACPI Tables
+7ffe0000-7fffffff : Reserved
+  7ffe0000-7fffffff : pnp 00:00
+80000000-87ffffff : PCI Bus 0000:02
+  80000000-83ffffff : PCI CardBus 0000:03
+88000000-880003ff : 0000:00:1f.1
+8c000000-8c000fff : 0000:02:0b.0
+  8c000000-8c000fff : yenta_socket
+90000000-93ffffff : PCI CardBus 0000:03
+d0000000-dfffffff : PCI Bus 0000:01
+  d0000000-dfffffff : 0000:01:00.0
+e0000000-efffffff : 0000:00:00.0
+fcdffd00-fcdffdff : 0000:00:1f.5
+  fcdffd00-fcdffdff : Intel 82801DB-ICH4
+fcdffe00-fcdfffff : 0000:00:1f.5
+  fcdffe00-fcdfffff : Intel 82801DB-ICH4
+fce00000-fcefffff : PCI Bus 0000:02
+  fcefde00-fcefdfff : 0000:02:0d.0
+    fcefde00-fcefdfff : toshsd
+  fcefe000-fcefefff : 0000:02:08.0
+    fcefe000-fcefefff : e100
+  fceff000-fcefffff : 0000:02:05.0
+    fceff000-fcefffff : ipw2200
+fcfffc00-fcffffff : 0000:00:1d.7
+  fcfffc00-fcffffff : ehci_hcd
+fd000000-fdffffff : PCI Bus 0000:01
+  fd000000-fdffffff : 0000:01:00.0
+feda0000-fedbffff : Reserved
+  feda0000-fedbffff : pnp 00:00
+ffb80000-ffbfffff : Reserved
+  ffb80000-ffbfffff : pnp 00:00
+fff00000-ffffffff : Reserved
+  fff00000-ffffffff : pnp 00:00

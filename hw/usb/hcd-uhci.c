@@ -1231,6 +1231,10 @@ void usb_uhci_common_realize(PCIDevice *dev, Error **errp)
      * to rely on this.
      */
     pci_register_bar(&s->dev, 4, PCI_BASE_ADDRESS_SPACE_IO, &s->io_bar);
+
+    /* Intel ICH Legacy Support Register (LEGSUP) */
+    pci_set_word(pci_conf + 0xc0, 0x2000);
+    pci_set_word(dev->wmask + 0xc0, 0xffff);
 }
 
 static void usb_uhci_exit(PCIDevice *dev)

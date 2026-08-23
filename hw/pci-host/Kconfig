@@ -46,10 +46,6 @@ config PCI_I440FX
     select PCI
     select PAM
 
-config PCI_EXPRESS_ASPEED
-    bool
-    select PCI_EXPRESS
-
 config PCI_EXPRESS_Q35
     bool
     select PCI_EXPRESS
@@ -112,3 +108,8 @@ config GT64120
     select PCI
     select EMPTY_SLOT
     select I8259
+
+config PCI_I855PM
+    bool
+    select PCI
+    select PAM

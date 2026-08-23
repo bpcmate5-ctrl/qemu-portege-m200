@@ -1,0 +1,31 @@
+           CPU0       
+  0:     452873    XT-PIC      timer
+  1:       2184    XT-PIC      i8042
+  2:          0    XT-PIC      cascade
+  4:         17    XT-PIC      ttyS0
+  8:          0    XT-PIC      rtc0
+  9:        198    XT-PIC      acpi
+ 10:        409    XT-PIC      nvkm
+ 11:      80552    XT-PIC      toshsd, ehci_hcd:usb1, uhci_hcd:usb2, uhci_hcd:usb3, uhci_hcd:usb4, yenta, ipw2200, snd_intel8x0m, snd_intel8x0, enp2s8
+ 12:      17375    XT-PIC      i8042
+ 14:      35597    XT-PIC      ata_piix
+ 15:          0    XT-PIC      ata_piix
+NMI:          0   Non-maskable interrupts
+LOC:          0   Local timer interrupts
+SPU:          0   Spurious interrupts
+PMI:          0   Performance monitoring interrupts
+IWI:          0   IRQ work interrupts
+RTR:          0   APIC ICR read retries
+RES:          0   Rescheduling interrupts
+CAL:          0   Function call interrupts
+TLB:          0   TLB shootdowns
+TRM:          0   Thermal event interrupts
+THR:          0   Threshold APIC interrupts
+DFR:          0   Deferred Error APIC interrupts
+MCE:          0   Machine check exceptions
+MCP:          5   Machine check polls
+ERR:          0
+MIS:          0
+PIN:          0   Posted-interrupt notification event
+NPI:          0   Nested posted-interrupt event
+PIW:          0   Posted-interrupt wakeup event

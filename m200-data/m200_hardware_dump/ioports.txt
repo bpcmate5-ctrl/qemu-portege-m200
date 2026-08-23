@@ -1,0 +1,74 @@
+0000-001f : dma1
+0020-0021 : pic1
+0040-0043 : timer0
+0050-0053 : timer1
+0060-0060 : keyboard
+0061-0061 : PNP0800:00
+0064-0064 : keyboard
+0070-0071 : rtc0
+0080-008f : dma page reg
+00a0-00a1 : pic2
+00c0-00df : dma2
+00f0-00ff : PNP0C04:00
+  00f0-00ff : fpu
+0170-0177 : 0000:00:1f.1
+  0170-0177 : ata_piix
+01e0-01e7 : pnp 00:04
+01f0-01f7 : 0000:00:1f.1
+  01f0-01f7 : ata_piix
+0338-033f : serial
+0376-0376 : 0000:00:1f.1
+  0376-0376 : ata_piix
+03c0-03df : vga+
+03f6-03f6 : 0000:00:1f.1
+  03f6-03f6 : ata_piix
+0480-048f : pnp 00:04
+04d0-04d1 : pnp 00:04
+0680-06ff : pnp 00:04
+0cf8-0cff : PCI conf1
+b980-b9ff : 0000:00:1f.6
+  b980-b9ff : Intel 82801DB-ICH4 Modem
+ba00-baff : 0000:00:1f.6
+  ba00-baff : Intel 82801DB-ICH4 Modem
+bdc0-bdff : 0000:00:1f.5
+  bdc0-bdff : Intel 82801DB-ICH4
+be00-beff : 0000:00:1f.5
+  be00-beff : Intel 82801DB-ICH4
+bfa0-bfaf : 0000:00:1f.1
+  bfa0-bfaf : ata_piix
+c000-cfff : PCI Bus 0000:02
+  c000-c0ff : PCI CardBus 0000:03
+  c400-c4ff : PCI CardBus 0000:03
+  cf40-cf7f : 0000:02:08.0
+    cf40-cf7f : e100
+d800-d87f : 0000:00:1f.0
+  d800-d87f : pnp 00:04
+    d800-d803 : ACPI PM1a_EVT_BLK
+    d804-d805 : ACPI PM1a_CNT_BLK
+    d808-d80b : ACPI PM_TMR
+    d820-d820 : ACPI PM2_CNT_BLK
+    d828-d82f : ACPI GPE0_BLK
+    d830-d833 : iTCO_wdt.1.auto
+      d830-d833 : iTCO_wdt
+    d860-d87f : iTCO_wdt.1.auto
+      d860-d87f : iTCO_wdt
+d880-d89f : pnp 00:04
+d8a0-d8bf : pnp 00:04
+e000-e07f : pnp 00:04
+e080-e0ff : pnp 00:04
+e400-e47f : pnp 00:04
+e480-e4ff : pnp 00:04
+e800-e87f : pnp 00:04
+e880-e8ff : pnp 00:04
+ec00-ec7f : pnp 00:04
+ec80-ecff : pnp 00:04
+eeac-eeac : pnp 00:04
+eeb0-eebf : pnp 00:04
+eec0-eeff : 0000:00:1f.0
+  eec0-eeff : pnp 00:04
+ef60-ef7f : 0000:00:1d.2
+  ef60-ef7f : uhci_hcd
+ef80-ef9f : 0000:00:1d.1
+  ef80-ef9f : uhci_hcd
+efe0-efff : 0000:00:1d.0
+  efe0-efff : uhci_hcd

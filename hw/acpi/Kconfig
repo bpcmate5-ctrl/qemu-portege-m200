@@ -18,6 +18,11 @@ config ACPI_ICH9
     select ACPI_X86
     select APM
 
+config ACPI_ICH4M
+    bool
+    select ACPI
+    select APM
+
 config ACPI_CPU_HOTPLUG
     bool
 
@@ -50,11 +55,6 @@ config ACPI_HMAT
 config ACPI_APEI
     bool
     depends on ACPI
-
-config GHES_CPER
-    bool
-    depends on ACPI_APEI
-    default y
 
 config ACPI_PCI
     bool

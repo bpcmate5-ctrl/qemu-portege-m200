@@ -75,3 +75,11 @@ config LPC_ICH9
     select ISA_BUS
     select ACPI_ICH9
     select MC146818RTC
+
+config LPC_ICH4M
+    bool
+    select I8257
+    select ISA_BUS
+    select ACPI_ICH4M
+    select MC146818RTC
+    select APM

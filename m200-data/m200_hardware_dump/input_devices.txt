@@ -1,0 +1,95 @@
+I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
+N: Name="AT Translated Set 2 keyboard"
+P: Phys=isa0060/serio0/input0
+S: Sysfs=/devices/platform/i8042/serio0/input/input0
+U: Uniq=
+H: Handlers=sysrq kbd leds event0 
+B: PROP=0
+B: EV=120013
+B: KEY=4 2000002 3803078 f800d001 feffffdf ffefffff ffffffff fffffffe
+B: MSC=10
+B: LED=7
+
+I: Bus=0019 Vendor=0000 Product=0001 Version=0000
+N: Name="Power Button"
+P: Phys=PNP0C0C/button/input0
+S: Sysfs=/devices/LNXSYSTM:00/LNXSYBUS:00/PNP0C0C:00/input/input2
+U: Uniq=
+H: Handlers=kbd event1 
+B: PROP=0
+B: EV=3
+B: KEY=100000 0 0 0
+
+I: Bus=0019 Vendor=0000 Product=0005 Version=0000
+N: Name="Lid Switch"
+P: Phys=PNP0C0D/button/input0
+S: Sysfs=/devices/LNXSYSTM:00/LNXSYBUS:00/PNP0C0D:00/input/input3
+U: Uniq=
+H: Handlers=event2 
+B: PROP=0
+B: EV=21
+B: SW=1
+
+I: Bus=0019 Vendor=0000 Product=0001 Version=0000
+N: Name="Power Button"
+P: Phys=LNXPWRBN/button/input0
+S: Sysfs=/devices/LNXSYSTM:00/LNXPWRBN:00/input/input4
+U: Uniq=
+H: Handlers=kbd event3 
+B: PROP=0
+B: EV=3
+B: KEY=100000 0 0 0
+
+I: Bus=0019 Vendor=0000 Product=0006 Version=0000
+N: Name="Video Bus"
+P: Phys=LNXVIDEO/video/input0
+S: Sysfs=/devices/LNXSYSTM:00/LNXSYBUS:00/PNP0A03:00/device:21/LNXVIDEO:00/input/input5
+U: Uniq=
+H: Handlers=kbd event4 
+B: PROP=0
+B: EV=3
+B: KEY=3e000b 0 0 0 0 0 0 0
+
+I: Bus=0011 Vendor=0002 Product=0008 Version=0200
+N: Name="AlpsPS/2 ALPS GlidePoint"
+P: Phys=isa0060/serio1/input0
+S: Sysfs=/devices/platform/i8042/serio1/input/input6
+U: Uniq=
+H: Handlers=mouse0 event5 
+B: PROP=1
+B: EV=b
+B: KEY=420 0 70000 0 0 0 0 0 0 0 0
+B: ABS=1000003
+
+I: Bus=0010 Vendor=001f Product=0001 Version=0100
+N: Name="PC Speaker"
+P: Phys=isa0061/input0
+S: Sysfs=/devices/platform/pcspkr/input/input7
+U: Uniq=
+H: Handlers=kbd event6 
+B: PROP=0
+B: EV=40001
+B: SND=6
+
+I: Bus=0019 Vendor=0000 Product=0000 Version=0000
+N: Name="Toshiba input device"
+P: Phys=toshiba_acpi/input0
+S: Sysfs=/devices/LNXSYSTM:00/LNXSYBUS:00/TOS6208:00/input/input8
+U: Uniq=
+H: Handlers=kbd event7 rfkill 
+B: PROP=0
+B: EV=13
+B: KEY=40000 0 10000 1c 0 0 0 0 0 81501f 2000 38 9604001 20000 0 0 8000
+B: MSC=10
+
+I: Bus=0013 Vendor=056a Product=0090 Version=0100
+N: Name="Wacom Serial Penabled Pen"
+P: Phys=ttyS0/serio0/input0
+S: Sysfs=/devices/pnp0/00:05/tty/ttyS0/serio2/input/input9
+U: Uniq=
+H: Handlers=mouse1 event8 
+B: PROP=2
+B: EV=b
+B: KEY=1c03 0 0 0 0 0 0 0 0 0 0
+B: ABS=1000003
+
