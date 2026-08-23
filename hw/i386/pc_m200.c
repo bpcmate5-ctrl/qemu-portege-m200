@@ -34,6 +34,8 @@
 #include "hw/i2c/smbus_eeprom.h"
 #include "hw/southbridge/ich9.h"
 #include "hw/display/nv34m.h"
+#include "hw/char/serial-isa.h"
+#include "chardev/char.h"
 #include "qemu/datadir.h"
 #include "hw/core/loader.h"
 
@@ -268,14 +270,25 @@ static uint8_t *toshiba_system_ram = NULL;
 
 static uint64_t toshiba_ivt_read(void *opaque, hwaddr addr, unsigned size)
 {
-    if (addr == 0x40 && size == 4) {
-        return 0xc000006f; /* INT 10h -> NVIDIA VBIOS */
-    }
-    if (addr == 0x20 && size == 4) {
-        return 0xf000feb0; /* INT 08h -> System BIOS Timer */
-    }
-    if (addr == 0x24 && size == 4) {
-        return 0xf000d16d; /* INT 09h -> System BIOS Keyboard */
+    if (size == 4) {
+        switch (addr) {
+        case 0x20: return 0xf000feb0; /* INT 08h -> System BIOS Timer Tick */
+        case 0x24: return 0xf000d16d; /* INT 09h -> System BIOS Keyboard ISR */
+        case 0x40: return 0xc000006f; /* INT 10h -> NVIDIA VBIOS Video Services */
+        case 0x44: return 0xf000f84d; /* INT 11h -> Equipment List Services */
+        case 0x48: return 0xf000f841; /* INT 12h -> Memory Size Services */
+        case 0x4c: return 0xf000ec59; /* INT 13h -> Fixed Disk & Floppy Services */
+        case 0x50: return 0xf000e739; /* INT 14h -> Serial Communications */
+        case 0x54: return 0xf000f859; /* INT 15h -> System & ACPI E820 Services */
+        case 0x58: return 0xf000e82e; /* INT 16h -> Keyboard Input Services */
+        case 0x5c: return 0xf000efd2; /* INT 17h -> Parallel Printer Services */
+        case 0x60: return 0xf000e2c3; /* INT 18h -> ROM BASIC / Boot Failure */
+        case 0x64: return 0xf000e6f2; /* INT 19h -> Bootstrap OS Loader */
+        case 0x68: return 0xf000fe6e; /* INT 1Ah -> Real-Time Clock Services */
+        case 0x70: return 0xf000ff53; /* INT 1Ch -> User Timer Tick Hook */
+        case 0x78: return 0xf000efc7; /* INT 1Eh -> Floppy Parameter Table */
+        default: break;
+        }
     }
     if (toshiba_system_ram && (addr + size) <= 1024) {
         uint64_t val = 0;
@@ -787,6 +800,14 @@ static void m200_init(MachineState *machine)
     pc_basic_device_init(pcms, isa_bus, x86ms->gsi, x86ms->rtc, !mc->no_floppy,
                          0xff0104);
 
+    /* Wacom ISDV4 Serial Tablet PC Digitizer on COM4 (I/O 0x0338, IRQ 4) */
+    Chardev *wacom_chr = qemu_chardev_new(NULL, "chardev-wctablet", NULL, NULL, &error_fatal);
+    ISADevice *wacom_serial = isa_new(TYPE_ISA_SERIAL);
+    qdev_prop_set_uint32(DEVICE(wacom_serial), "iobase", 0x0338);
+    qdev_prop_set_uint32(DEVICE(wacom_serial), "irq", 4);
+    qdev_prop_set_chr(DEVICE(wacom_serial), "chardev", wacom_chr);
+    isa_realize_and_unref(wacom_serial, isa_bus, &error_fatal);
+
     /* ICH4-M IDE Controller (D31:F1) */
     pci_ide = pci_create_simple_multifunction(pcms->pcibus,
                                              PCI_DEVFN(ICH4M_IDE_DEV, ICH4M_IDE_FUNC),
@@ -896,7 +917,14 @@ static void m200_init(MachineState *machine)
         if (filename) {
             FILE *f = fopen(filename, "rb");
             if (f) {
-                fseek(f, 0x20000, SEEK_SET); /* Module 2 (System BIOS) offset in 512KB ROM */
+                uint8_t *ram = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
+                /* Preload full 512KB ROM modules into low memory working segments */
+                fseek(f, 0, SEEK_SET);
+                if (fread(ram, 1, 0x80000, f) != 0x80000) {
+                    /* Read complete */
+                }
+                /* Preload Module 2 System BIOS into 0xF0000 */
+                fseek(f, 0x20000, SEEK_SET);
                 if (fread(memory_region_get_ram_ptr(shadow_ram_f0000), 1, 0x10000, f) == 0x10000) {
                     /* Successfully preloaded System BIOS */
                 }

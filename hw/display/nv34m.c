@@ -50,12 +50,16 @@
 #define NV_PTIMER_NUMERATOR       0x009420
 #define NV_PTIMER_DENOMINATOR     0x009424
 
-#define NV_PBUS_PCI_NV_0          0x100000
-#define NV_PBUS_PCI_NV_1          0x100004
-#define NV_PBUS_DEBUG_1           0x100200
+#define NV_PBUS_PCI_NV_0          0x001800
+#define NV_PBUS_PCI_NV_1          0x001804
+#define NV_PBUS_DEBUG_1           0x001084
 #define NV_PSTRAPS                0x101000
 
+#define NV_PRMCIO_INP0__COLOR     0x6013da
+#define NV_PRAMDAC_FP_TG_CONTROL  0x680800
+#define NV_PRAMDAC_FP_DEBUG_0     0x680880
 #define NV_PRAMDAC_GENERAL        0x680500
+#define NV_PRAMDAC_GENERAL_CONTROL 0x680600
 #define NV_PRAMDAC_VPLL           0x680508
 #define NV_PRAMDAC_MPLL           0x68050c
 
@@ -343,6 +347,7 @@ void nv34m_vga_write_text(int row, int col, uint8_t ch, uint8_t attr)
     int idx = (row * 80 + col) * 4;
     global_nv34m_state->vga.vram_ptr[idx + 0] = ch;
     global_nv34m_state->vga.vram_ptr[idx + 1] = attr;
+    global_nv34m_state->vga.full_update_text = true;
 }
 
 void nv34m_vga_clear_screen(uint8_t attr)
