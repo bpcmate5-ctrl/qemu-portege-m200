@@ -318,6 +318,7 @@ static void toshiba_apmc_write(void *opaque, hwaddr addr, uint64_t val, unsigned
         /* Toshiba SMM Signature 'TX\x00\x01' in EAX */
         env->regs[R_EAX] = 0x74580001;
         env->regs[R_EBX] = 0x00000000;
+        cpu_loop_exit(cpu);
     }
 }
 
