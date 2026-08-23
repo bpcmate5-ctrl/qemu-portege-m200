@@ -918,6 +918,31 @@ static void m200_init(MachineState *machine)
     ide_drive_get(hd, ARRAY_SIZE(hd));
     pci_ide_create_devs(pci_ide);
 
+    /* Initialize CMOS NVRAM parameters for RTC (0x70/0x71) */
+    MC146818RtcState *rtc_s = MC146818_RTC(x86ms->rtc);
+    if (rtc_s) {
+        /* Base memory: 640 KB */
+        mc146818rtc_set_cmos_data(rtc_s, 0x15, 640 & 0xff);
+        mc146818rtc_set_cmos_data(rtc_s, 0x16, 640 >> 8);
+        /* Extended memory: 511 MB */
+        int ext_mem = (512 * 1024 - 1024); /* in KB */
+        if (ext_mem > 65535) ext_mem = 65535;
+        mc146818rtc_set_cmos_data(rtc_s, 0x17, ext_mem & 0xff);
+        mc146818rtc_set_cmos_data(rtc_s, 0x18, ext_mem >> 8);
+        mc146818rtc_set_cmos_data(rtc_s, 0x30, ext_mem & 0xff);
+        mc146818rtc_set_cmos_data(rtc_s, 0x31, ext_mem >> 8);
+        /* Memory above 16MB: 496 MB (in 64KB blocks -> 7936 = 0x1F00) */
+        mc146818rtc_set_cmos_data(rtc_s, 0x34, 0x00);
+        mc146818rtc_set_cmos_data(rtc_s, 0x35, 0x1f);
+        /* Hard drive type: Primary Master present (0xF0) */
+        mc146818rtc_set_cmos_data(rtc_s, 0x12, 0xf0);
+        /* Equipment byte: 80x25 color, 1 FDD, FPU */
+        mc146818rtc_set_cmos_data(rtc_s, 0x14, 0x27);
+        /* Boot sequence: CD-ROM first (0x03), then HDD (0x02), then FDD (0x01) */
+        mc146818rtc_set_cmos_data(rtc_s, 0x38, 0x32);
+        mc146818rtc_set_cmos_data(rtc_s, 0x3d, 0x20);
+    }
+
     /* USB UHCI & EHCI (D29:F0, F1, F2, F7) */
     PCIDevice *u1 = pci_create_simple_multifunction(pcms->pcibus, PCI_DEVFN(29, 0), "piix4-usb-uhci");
     PCIDevice *u2 = pci_create_simple_multifunction(pcms->pcibus, PCI_DEVFN(29, 1), "piix4-usb-uhci");
@@ -1001,29 +1026,13 @@ static void m200_init(MachineState *machine)
     memory_region_init_ram(smram_high, NULL, "m200.smram-high", 0x20000, &error_fatal);
     memory_region_add_subregion_overlap(system_memory, 0xfeda0000, smram_high, 1000);
 
-    /* Map 64KB Shadow RAM at 0x000E0000 (preloaded with Module 2 First 64KB at ROM 0x20000) */
-    MemoryRegion *shadow_ram_e0000 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(shadow_ram_e0000, NULL, "m200.shadow-e0000", 0x10000, &error_fatal);
-    if (machine->firmware) {
-        char *filename = qemu_find_file(QEMU_FILE_TYPE_BIOS, machine->firmware);
-        if (filename) {
-            FILE *f = fopen(filename, "rb");
-            if (f) {
-                fseek(f, 0x20000, SEEK_SET); /* Module 2 First 64KB */
-                if (fread(memory_region_get_ram_ptr(shadow_ram_e0000), 1, 0x10000, f) == 0x10000) {
-                    /* Successfully preloaded Module 2 First 64KB */
-                }
-                fclose(f);
-            }
-            g_free(filename);
-        }
-    }
-    memory_region_add_subregion_overlap(system_memory, 0xe0000, shadow_ram_e0000, 1000);
+    /* Map Toshiba authentic shadow RAM when 512K ROM is loaded */
+    if (machine->firmware && (strstr(machine->firmware, "512") || strstr(machine->firmware, "TOSHIBA"))) {
+        MemoryRegion *shadow_ram_e0000 = g_new(MemoryRegion, 1);
+        memory_region_init_ram(shadow_ram_e0000, NULL, "m200.shadow-e0000", 0x10000, &error_fatal);
+        MemoryRegion *shadow_ram_f0000 = g_new(MemoryRegion, 1);
+        memory_region_init_ram(shadow_ram_f0000, NULL, "m200.shadow-f0000", 0x10000, &error_fatal);
 
-    /* Map 64KB Shadow RAM at 0x000F0000 (preloaded with Module 2 Second 64KB at ROM 0x30000) */
-    MemoryRegion *shadow_ram_f0000 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(shadow_ram_f0000, NULL, "m200.shadow-f0000", 0x10000, &error_fatal);
-    if (machine->firmware) {
         char *filename = qemu_find_file(QEMU_FILE_TYPE_BIOS, machine->firmware);
         if (filename) {
             FILE *f = fopen(filename, "rb");
@@ -1032,22 +1041,24 @@ static void m200_init(MachineState *machine)
                 /* Preload full 512KB ROM into RAM */
                 fseek(f, 0, SEEK_SET);
                 if (fread(ram, 1, 0x80000, f) != 0x80000) {}
-                /* Preload Module 2 Second 64KB (Module 3) into 0xF0000 */
+
+                /* Preload Module 3 POST Graphics at 0xE0000 */
                 fseek(f, 0x30000, SEEK_SET);
-                if (fread(memory_region_get_ram_ptr(shadow_ram_f0000), 1, 0x10000, f) == 0x10000) {
-                    /* Successfully preloaded System BIOS Second 64KB */
-                }
+                if (fread(memory_region_get_ram_ptr(shadow_ram_e0000), 1, 0x10000, f) == 0x10000) {}
+
+                /* Preload Module 2 System BIOS into 0xF0000 */
+                fseek(f, 0x20000, SEEK_SET);
+                if (fread(memory_region_get_ram_ptr(shadow_ram_f0000), 1, 0x10000, f) == 0x10000) {}
+
                 uint8_t *f0000_ptr = (uint8_t *)memory_region_get_ram_ptr(shadow_ram_f0000);
                 /* Preload authentic Boot Block GDT Table at 0x000FDE3A */
                 fseek(f, 0x7de3a, SEEK_SET);
-                if (fread(f0000_ptr + 0xde3a, 1, 0x130, f) == 0x130) {
-                    /* Successfully preloaded GDT table */
-                }
+                if (fread(f0000_ptr + 0xde3a, 1, 0x130, f) == 0x130) {}
+
                 /* Preload authentic Boot Block LGDT pseudo-descriptor at 0x000F1E34 */
                 fseek(f, 0x7de34, SEEK_SET);
-                if (fread(f0000_ptr + 0x1e34, 1, 6, f) == 6) {
-                    /* Successfully preloaded LGDT descriptor */
-                }
+                if (fread(f0000_ptr + 0x1e34, 1, 6, f) == 6) {}
+
                 /* Place authentic System BIOS direct Boot entry jump at 0x000FFFF0 */
                 uint8_t *ptr = (uint8_t *)memory_region_get_ram_ptr(shadow_ram_f0000);
                 ptr[0xfff0] = 0xea;
@@ -1059,8 +1070,9 @@ static void m200_init(MachineState *machine)
             }
             g_free(filename);
         }
+        memory_region_add_subregion_overlap(system_memory, 0xe0000, shadow_ram_e0000, 1000);
+        memory_region_add_subregion_overlap(system_memory, 0xf0000, shadow_ram_f0000, 1000);
     }
-    memory_region_add_subregion_overlap(system_memory, 0xf0000, shadow_ram_f0000, 1000);
 
     /* Map Video BIOS INT 10h Service Port (0x180) */
     MemoryRegion *vga_int10_io = g_new(MemoryRegion, 1);
@@ -1125,68 +1137,70 @@ static void m200_init(MachineState *machine)
     *(uint32_t *)(ram_base + 0x83c) = 0x000f0000;
     *(uint32_t *)(ram_base + 0x842) = 0x00007000;
 
-    /* Initialize Interrupt Vector Table (IVT) Overlay (0x00000000..0x000003FF) */
-    MemoryRegion *ivt_mr = g_new(MemoryRegion, 1);
-    memory_region_init_io(ivt_mr, OBJECT(machine), &toshiba_ivt_ops, NULL, "m200-ivt", 1024);
-    memory_region_add_subregion_overlap(system_memory, 0x00000000, ivt_mr, 1000);
+    /* Initialize Interrupt Vector Table (IVT) Overlay for authentic Toshiba firmware */
+    if (machine->firmware && (strstr(machine->firmware, "512") || strstr(machine->firmware, "TOSHIBA"))) {
+        MemoryRegion *ivt_mr = g_new(MemoryRegion, 1);
+        memory_region_init_io(ivt_mr, OBJECT(machine), &toshiba_ivt_ops, NULL, "m200-ivt", 1024);
+        memory_region_add_subregion_overlap(system_memory, 0x00000000, ivt_mr, 1000);
 
-    uint32_t *ivt = (uint32_t *)memory_region_get_ram_ptr(machine->ram);
-    for (i = 0; i < 256; i++) {
-        ivt[i] = 0xf000ff53; /* F000:FF53 (Default IRET) */
-    }
-    /* Point Master PIC hardware IRQ 0..7 (INT 08h..0Fh) to EOI handler at F000:FF40 */
-    for (i = 0x08; i <= 0x0f; i++) {
-        ivt[i] = 0xf000ff40;
-    }
-    /* Point Slave PIC hardware IRQ 8..15 (INT 70h..77h) to EOI handler at F000:FF30 */
-    for (i = 0x70; i <= 0x77; i++) {
-        ivt[i] = 0xf000ff30;
-    }
-    ivt[0x08] = 0xf000feb0; /* F000:FEB0 (Authentic Toshiba System BIOS Timer Tick) */
-    ivt[0x09] = 0xf000d16d; /* F000:D16D (Authentic Toshiba System BIOS Keyboard Handler) */
-    ivt[0x10] = 0xf000f000; /* F000:F000 (INT 10h Video Service at Port 0x180) */
-    ivt[0x11] = 0xf000f84d; /* F000:F84D (Equipment List Services) */
-    ivt[0x12] = 0xf000f841; /* F000:F841 (Memory Size Services) */
-    ivt[0x13] = 0xf000ec59; /* F000:EC59 (Fixed Disk & Floppy Services) */
-    ivt[0x14] = 0xf000e739; /* F000:E739 (Serial Communications) */
-    ivt[0x15] = 0xf000f859; /* F000:F859 (System & ACPI E820 Services) */
-    ivt[0x16] = 0xf000e82e; /* F000:E82E (Keyboard Input Services) */
-    ivt[0x17] = 0xf000efd2; /* F000:EFD2 (Parallel Printer Services) */
-    ivt[0x18] = 0xf000e2c3; /* F000:E2C3 (ROM BASIC / Boot Failure) */
-    ivt[0x19] = 0xf000e6f2; /* F000:E6F2 (Bootstrap OS Loader) */
-    ivt[0x1a] = 0xf000fe6e; /* F000:FE6E (Real-Time Clock Services) */
-    ivt[0x1c] = 0xf000ff53; /* F000:FF53 (User Timer Hook IRET) */
-    ivt[0x1e] = 0xf000efc7; /* F000:EFC7 (Floppy Parameter Table) */
+        uint32_t *ivt = (uint32_t *)memory_region_get_ram_ptr(machine->ram);
+        for (i = 0; i < 256; i++) {
+            ivt[i] = 0xf000ff53; /* F000:FF53 (Default IRET) */
+        }
+        /* Point Master PIC hardware IRQ 0..7 (INT 08h..0Fh) to EOI handler at F000:FF40 */
+        for (i = 0x08; i <= 0x0f; i++) {
+            ivt[i] = 0xf000ff40;
+        }
+        /* Point Slave PIC hardware IRQ 8..15 (INT 70h..77h) to EOI handler at F000:FF30 */
+        for (i = 0x70; i <= 0x77; i++) {
+            ivt[i] = 0xf000ff30;
+        }
+        ivt[0x08] = 0xf000feb0; /* F000:FEB0 (Authentic Toshiba System BIOS Timer Tick) */
+        ivt[0x09] = 0xf000d16d; /* F000:D16D (Authentic Toshiba System BIOS Keyboard Handler) */
+        ivt[0x10] = 0xf000f000; /* F000:F000 (INT 10h Video Service at Port 0x180) */
+        ivt[0x11] = 0xf000f84d; /* F000:F84D (Equipment List Services) */
+        ivt[0x12] = 0xf000f841; /* F000:F841 (Memory Size Services) */
+        ivt[0x13] = 0xf000ec59; /* F000:EC59 (Fixed Disk & Floppy Services) */
+        ivt[0x14] = 0xf000e739; /* F000:E739 (Serial Communications) */
+        ivt[0x15] = 0xf000f859; /* F000:F859 (System & ACPI E820 Services) */
+        ivt[0x16] = 0xf000e82e; /* F000:E82E (Keyboard Input Services) */
+        ivt[0x17] = 0xf000efd2; /* F000:EFD2 (Parallel Printer Services) */
+        ivt[0x18] = 0xf000e2c3; /* F000:E2C3 (ROM BASIC / Boot Failure) */
+        ivt[0x19] = 0xf000e6f2; /* F000:E6F2 (Bootstrap OS Loader) */
+        ivt[0x1a] = 0xf000fe6e; /* F000:FE6E (Real-Time Clock Services) */
+        ivt[0x1c] = 0xf000ff53; /* F000:FF53 (User Timer Hook IRET) */
+        ivt[0x1e] = 0xf000efc7; /* F000:EFC7 (Floppy Parameter Table) */
 
-    /* Install default stubs in Shadow RAM F0000 */
-    uint8_t *f0000_ptr = (uint8_t *)memory_region_get_ram_ptr(shadow_ram_f0000);
-    /* F000:FF53 -> iret */
-    f0000_ptr[0xff53] = 0xcf;
-    /* F000:FF40 -> push %ax; mov $0x20, %al; out %al, $0x20; pop %ax; iret */
-    f0000_ptr[0xff40] = 0x50;
-    f0000_ptr[0xff41] = 0xb0;
-    f0000_ptr[0xff42] = 0x20;
-    f0000_ptr[0xff43] = 0xe6;
-    f0000_ptr[0xff44] = 0x20;
-    f0000_ptr[0xff45] = 0x58;
-    f0000_ptr[0xff46] = 0xcf;
-    /* F000:FF30 -> push %ax; mov $0x20, %al; out %al, $0xa0; out %al, $0x20; pop %ax; iret */
-    f0000_ptr[0xff30] = 0x50;
-    f0000_ptr[0xff31] = 0xb0;
-    f0000_ptr[0xff32] = 0x20;
-    f0000_ptr[0xff33] = 0xe6;
-    f0000_ptr[0xff34] = 0xa0;
-    f0000_ptr[0xff35] = 0xe6;
-    f0000_ptr[0xff36] = 0x20;
-    f0000_ptr[0xff37] = 0x58;
-    f0000_ptr[0xff38] = 0xcf;
+        /* Install default stubs in RAM F0000 */
+        uint8_t *f0000_ptr = ram_base + 0xf0000;
+        /* F000:FF53 -> iret */
+        f0000_ptr[0xff53] = 0xcf;
+        /* F000:FF40 -> push %ax; mov $0x20, %al; out %al, $0x20; pop %ax; iret */
+        f0000_ptr[0xff40] = 0x50;
+        f0000_ptr[0xff41] = 0xb0;
+        f0000_ptr[0xff42] = 0x20;
+        f0000_ptr[0xff43] = 0xe6;
+        f0000_ptr[0xff44] = 0x20;
+        f0000_ptr[0xff45] = 0x58;
+        f0000_ptr[0xff46] = 0xcf;
+        /* F000:FF30 -> push %ax; mov $0x20, %al; out %al, $0xa0; out %al, $0x20; pop %ax; iret */
+        f0000_ptr[0xff30] = 0x50;
+        f0000_ptr[0xff31] = 0xb0;
+        f0000_ptr[0xff32] = 0x20;
+        f0000_ptr[0xff33] = 0xe6;
+        f0000_ptr[0xff34] = 0xa0;
+        f0000_ptr[0xff35] = 0xe6;
+        f0000_ptr[0xff36] = 0x20;
+        f0000_ptr[0xff37] = 0x58;
+        f0000_ptr[0xff38] = 0xcf;
 
-    /* Install INT 10h ROM Stub at 0xF000:F000: mov $0x0180, %dx; out %al, (%dx); iret */
-    f0000_ptr[0xf000] = 0xba;
-    f0000_ptr[0xf001] = 0x80;
-    f0000_ptr[0xf002] = 0x01;
-    f0000_ptr[0xf003] = 0xee;
-    f0000_ptr[0xf004] = 0xcf;
+        /* Install INT 10h ROM Stub at 0xF000:F000: mov $0x0180, %dx; out %al, (%dx); iret */
+        f0000_ptr[0xf000] = 0xba;
+        f0000_ptr[0xf001] = 0x80;
+        f0000_ptr[0xf002] = 0x01;
+        f0000_ptr[0xf003] = 0xee;
+        f0000_ptr[0xf004] = 0xcf;
+    }
 
     /* Place safety IRET at 0x00000000 so any jumps to 0x0000:0000 return cleanly */
     *(uint8_t *)memory_region_get_ram_ptr(machine->ram) = 0xcf;
