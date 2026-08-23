@@ -42,6 +42,7 @@
 
 /* Toshiba Portege M200 Motherboard Straps & Hardware ID (Port 0x85) */
 static uint8_t toshiba_m200_port85 = 0x00;
+static uint8_t *toshiba_system_ram = NULL;
 
 static uint64_t toshiba_m200_io_read(void *opaque, hwaddr addr, unsigned size)
 {
@@ -285,6 +286,9 @@ static uint64_t toshiba_lcd_d800_read(void *opaque, hwaddr addr, unsigned size)
 
 static void toshiba_lcd_d800_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
+    if (toshiba_system_ram) {
+        nv34m_vga_sync_ram_buffer(toshiba_system_ram);
+    }
 }
 
 static const MemoryRegionOps toshiba_lcd_d800_ops = {
@@ -354,8 +358,6 @@ static const MemoryRegionOps toshiba_kbc_status_ops = {
 };
 
 /* IVT Memory Intercept (0x00000000..0x000003FF) */
-static uint8_t *toshiba_system_ram = NULL;
-
 static uint64_t toshiba_ivt_read(void *opaque, hwaddr addr, unsigned size)
 {
     if (size == 4) {
@@ -1025,15 +1027,9 @@ static void m200_init(MachineState *machine)
             FILE *f = fopen(filename, "rb");
             if (f) {
                 uint8_t *ram = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
-                /* Preload Module 3 (POST Kernel Screen Writer) at 0x30000 */
-                fseek(f, 0x30000, SEEK_SET);
-                if (fread(ram + 0x30000, 1, 0x10000, f) != 0x10000) {}
-                /* Preload Module 4 (Setup Engine) at 0x40000 */
-                fseek(f, 0x40000, SEEK_SET);
-                if (fread(ram + 0x40000, 1, 0x10000, f) != 0x10000) {}
-                /* Preload Module 5 (Configuration Tables) at 0x50000 */
-                fseek(f, 0x50000, SEEK_SET);
-                if (fread(ram + 0x50000, 1, 0x10000, f) != 0x10000) {}
+                /* Preload full 512KB ROM into RAM */
+                fseek(f, 0, SEEK_SET);
+                if (fread(ram, 1, 0x80000, f) != 0x80000) {}
                 /* Preload Module 2 System BIOS into 0xF0000 */
                 fseek(f, 0x20000, SEEK_SET);
                 if (fread(memory_region_get_ram_ptr(shadow_ram_f0000), 1, 0x10000, f) == 0x10000) {
@@ -1168,6 +1164,7 @@ static void m200_init(MachineState *machine)
 
     /* Initialize BDA Video Variables (0x0040:0x0049..0x0089) for VGA Color Display */
     toshiba_system_ram = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
+    nv34m_set_system_ram(toshiba_system_ram);
     uint8_t *ram = toshiba_system_ram;
     *(uint16_t *)(ram + 0x410) = 0x0021; /* Equipment: 80x25 color display, floppy present */
     ram[0x449] = 0x03;                   /* Video mode 03h (80x25 color text) */

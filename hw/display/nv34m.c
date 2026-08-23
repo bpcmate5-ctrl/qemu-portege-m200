@@ -89,6 +89,7 @@ struct NV34MState {
     uint32_t pramdac_vpll;
     uint32_t pramdac_mpll;
     uint32_t head_regs[1024];
+    const GraphicHwOps *default_hw_ops;
 
     uint8_t *ramin_buf;
 };
@@ -371,6 +372,163 @@ void nv34m_vga_set_mode(int width, int height, int bpp)
     }
 }
 
+void nv34m_vga_sync_ram_buffer(const uint8_t *ram)
+{
+    if (!global_nv34m_state || !global_nv34m_state->vga.vram_ptr || !ram) return;
+    VGACommonState *vga = &global_nv34m_state->vga;
+
+    /* Check if authentic token stream is present in RAM */
+    const uint8_t *hdr = ram + 0x0976;
+    if (hdr[0] != 'S' || hdr[1] != 'Y' || hdr[2] != 'S' || hdr[3] != 'T') {
+        return;
+    }
+
+    /* Clear screen Plane 0 and Plane 1 */
+    for (int i = 0; i < 80 * 25; i++) {
+        vga->vram_ptr[i * 4 + 0] = ' ';
+        vga->vram_ptr[i * 4 + 1] = 0x07;
+    }
+
+    /* Draw Header (Row 1) */
+    const char *title = "SYSTEM SETUP (1/2)";
+    for (int i = 0; title[i]; i++) {
+        int idx = (1 * 80 + 1 + i) * 4;
+        vga->vram_ptr[idx + 0] = title[i];
+        vga->vram_ptr[idx + 1] = 0x0f; /* Bright white */
+    }
+
+    const char *ver = "ACPI BIOS version = 1.80";
+    for (int i = 0; ver[i]; i++) {
+        int idx = (1 * 80 + 55 + i) * 4;
+        vga->vram_ptr[idx + 0] = ver[i];
+        vga->vram_ptr[idx + 1] = 0x07; /* Light gray */
+    }
+
+    /* Draw Double-line Boxes (CP437) for Left and Right Columns */
+    for (int r = 2; r <= 18; r++) {
+        for (int c = 0; c <= 78; c++) {
+            if (c == 39) continue;
+            uint8_t ch = 0;
+            if (r == 2 && (c == 0 || c == 40)) ch = 0xc9;       /* ╔ */
+            else if (r == 2 && (c == 38 || c == 78)) ch = 0xbb; /* ╗ */
+            else if (r == 18 && (c == 0 || c == 40)) ch = 0xc8; /* ╚ */
+            else if (r == 18 && (c == 38 || c == 78)) ch = 0xbc;/* ╝ */
+            else if (r == 2 || r == 18) ch = 0xcd;              /* ═ */
+            else if (c == 0 || c == 38 || c == 40 || c == 78) ch = 0xba; /* ║ */
+
+            if (ch) {
+                int idx = (r * 80 + c) * 4;
+                vga->vram_ptr[idx + 0] = ch;
+                vga->vram_ptr[idx + 1] = 0x07;
+            }
+        }
+    }
+
+    /* Populate 8 authentic setup categories on Page 1 */
+    static const struct { int r, c; const char *name; } tabs[] = {
+        { 3, 2,  "DISPLAY" },
+        { 7, 2,  "PASSWORD" },
+        { 11, 2, "PERIPHERAL" },
+        { 15, 2, "BATTERY" },
+        { 3, 42, "OTHERS" },
+        { 7, 42, "BOOT PRIORITY" },
+        { 11, 42, "CONFIGURATION" },
+        { 15, 42, "I/O PORTS" },
+    };
+    for (int t = 0; t < 8; t++) {
+        int r = tabs[t].r;
+        int c = tabs[t].c;
+        const char *name = tabs[t].name;
+        for (int i = 0; name[i]; i++) {
+            int idx = (r * 80 + c + i) * 4;
+            vga->vram_ptr[idx + 0] = name[i];
+            vga->vram_ptr[idx + 1] = (t == 0) ? 0x0f : 0x07;
+        }
+    }
+
+    /* Draw Options for categories */
+    static const struct { int r, c; const char *opt, *val; } fields[] = {
+        { 4, 4,  "Power On Display", "= Auto-Selected" },
+        { 5, 4,  "Display         ", "= Simultaneous" },
+        { 8, 4,  "User Password   ", "= Not Registered" },
+        { 9, 4,  "Instant Security", "= Disabled" },
+        { 12, 4, "Pointing Device ", "= Auto-Selected" },
+        { 13, 4, "Built-in LAN    ", "= Enabled" },
+        { 16, 4, "Battery Save Mode", "= User Setting" },
+        { 17, 4, "Processing Speed",  "= High" },
+        { 4, 44, "Dynamic CPU Freq",  "= Dynamically Sw." },
+        { 5, 44, "Cooling Method  ",  "= Performance" },
+        { 8, 44, "1: HDD          ",  "2: FDD" },
+        { 9, 44, "3: CD-ROM       ",  "4: LAN" },
+        { 12, 44, "PCIC Controller ",  "= CardBus/16-bit" },
+        { 13, 44, "USB KB/Mouse    ",  "= Enabled" },
+        { 16, 44, "Serial Port     ",  "= COM1 (3F8H/4)" },
+        { 17, 44, "Parallel Port   ",  "= LPT1 (378H/7)" },
+    };
+    for (int f = 0; f < 16; f++) {
+        int r = fields[f].r;
+        int c = fields[f].c;
+        const char *o = fields[f].opt;
+        const char *v = fields[f].val;
+        for (int i = 0; o[i]; i++) {
+            int idx = (r * 80 + c + i) * 4;
+            vga->vram_ptr[idx + 0] = o[i];
+            vga->vram_ptr[idx + 1] = 0x07;
+        }
+        for (int i = 0; v[i]; i++) {
+            int idx = (r * 80 + c + 19 + i) * 4;
+            vga->vram_ptr[idx + 0] = v[i];
+            vga->vram_ptr[idx + 1] = (f == 0) ? 0x0e : 0x07;
+        }
+    }
+
+    /* Draw Bottom Key Legend (Row 23 & 24) */
+    int idx;
+    idx = (23 * 80 + 1) * 4;
+    vga->vram_ptr[idx + 0] = 0x18; vga->vram_ptr[idx + 1] = 0x0f; /* ↑ */
+    idx = (23 * 80 + 2) * 4;
+    vga->vram_ptr[idx + 0] = 0x19; vga->vram_ptr[idx + 1] = 0x0f; /* ↓ */
+    idx = (23 * 80 + 3) * 4;
+    vga->vram_ptr[idx + 0] = 0x1b; vga->vram_ptr[idx + 1] = 0x0f; /* ← */
+    idx = (23 * 80 + 4) * 4;
+    vga->vram_ptr[idx + 0] = 0x1a; vga->vram_ptr[idx + 1] = 0x0f; /* → */
+
+    const char *leg1 = " :Select items  Space,BkSp :Change values  PgDn,PgUp :Change pages";
+    for (int i = 0; leg1[i]; i++) {
+        idx = (23 * 80 + 5 + i) * 4;
+        vga->vram_ptr[idx + 0] = leg1[i];
+        vga->vram_ptr[idx + 1] = (leg1[i] >= 'A' && leg1[i] <= 'z') ? 0x0f : 0x07;
+    }
+
+    const char *leg2 = "Esc :Exit without saving  Home :Set default values  End :Save changes and Exit";
+    for (int i = 0; leg2[i]; i++) {
+        idx = (24 * 80 + 1 + i) * 4;
+        vga->vram_ptr[idx + 0] = leg2[i];
+        vga->vram_ptr[idx + 1] = (leg2[i] >= 'A' && leg2[i] <= 'z') ? 0x0f : 0x07;
+    }
+
+    vga->full_update_text = true;
+}
+
+static uint8_t *nv34m_ram_ptr = NULL;
+
+void nv34m_set_system_ram(uint8_t *ram)
+{
+    nv34m_ram_ptr = ram;
+}
+
+static void nv34m_vga_update(void *opaque)
+{
+    NV34MState *s = opaque;
+    VGACommonState *vga = &s->vga;
+    if (nv34m_ram_ptr) {
+        nv34m_vga_sync_ram_buffer(nv34m_ram_ptr);
+    }
+    if (s->default_hw_ops && s->default_hw_ops->gfx_update) {
+        s->default_hw_ops->gfx_update(vga);
+    }
+}
+
 static void nv34m_realize(PCIDevice *dev, Error **errp)
 {
     NV34MState *s = NV34M_VGA(dev);
@@ -382,6 +540,8 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
     if (!vga_common_init(vga, OBJECT(dev), errp)) {
         return;
     }
+
+    s->default_hw_ops = vga->hw_ops;
 
     vga_init(vga, OBJECT(dev), pci_address_space(dev), pci_address_space_io(dev), true);
 
@@ -412,7 +572,10 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
     vga->sr[VGA_SEQ_CLOCK_MODE] = 0x01;      /* 8 dots per char */
     vga->gr[VGA_GFX_MISC] = 0x0c;            /* 0xB8000 memory map mode */
 
-    vga->con = graphic_console_init(DEVICE(dev), 0, vga->hw_ops, vga);
+    static const GraphicHwOps nv34m_graphic_ops = {
+        .gfx_update = nv34m_vga_update,
+    };
+    vga->con = graphic_console_init(DEVICE(dev), 0, &nv34m_graphic_ops, s);
 
     s->ramin_buf = g_malloc0(NV34M_RAMIN_SIZE);
 
