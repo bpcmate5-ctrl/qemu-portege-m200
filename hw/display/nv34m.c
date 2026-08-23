@@ -333,7 +333,10 @@ static void nv34m_reset(DeviceState *dev)
             }
         }
 
-        nv34m_render_screen(s, 0);
+        for (int i = 0; i < 80 * 25; i++) {
+            s->vga.vram_ptr[i * 4 + 0] = ' ';
+            s->vga.vram_ptr[i * 4 + 1] = 0x07;
+        }
     }
 }
 
