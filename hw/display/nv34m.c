@@ -88,6 +88,7 @@ struct NV34MState {
     uint32_t pramdac_general;
     uint32_t pramdac_vpll;
     uint32_t pramdac_mpll;
+    uint32_t head_regs[1024];
 
     uint8_t *ramin_buf;
 };
@@ -148,17 +149,6 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
         val = s->pstraps;
         break;
 
-    /* PRAMDAC */
-    case NV_PRAMDAC_GENERAL:
-        val = s->pramdac_general;
-        break;
-    case NV_PRAMDAC_VPLL:
-        val = s->pramdac_vpll;
-        break;
-    case NV_PRAMDAC_MPLL:
-        val = s->pramdac_mpll;
-        break;
-
     /* VGA CRTC / Sequencer / GC Registers */
     case 0x6013c0 ... 0x6013da:
     case 0x6033c0 ... 0x6033da: {
@@ -167,10 +157,17 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
         break;
     }
 
-    /* VGA DAC Registers */
-    case 0x6803c6 ... 0x6803c9: {
-        uint32_t port = 0x3c6 + (addr - 0x6803c6);
-        val = vga_ioport_read(&s->vga, port);
+    /* Display Head & Flat Panel MMIO (0x680000..0x680FFF) */
+    case 0x680000 ... 0x680fff: {
+        if (addr >= 0x6803c6 && addr <= 0x6803c9) {
+            uint32_t port = 0x3c6 + (addr - 0x6803c6);
+            val = vga_ioport_read(&s->vga, port);
+        } else {
+            uint32_t idx = (addr - 0x680000) >> 2;
+            if (idx < 1024) {
+                val = s->head_regs[idx];
+            }
+        }
         break;
     }
 
@@ -221,16 +218,6 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
         s->pstraps = val;
         break;
 
-    case NV_PRAMDAC_GENERAL:
-        s->pramdac_general = val;
-        break;
-    case NV_PRAMDAC_VPLL:
-        s->pramdac_vpll = val;
-        break;
-    case NV_PRAMDAC_MPLL:
-        s->pramdac_mpll = val;
-        break;
-
     /* VGA CRTC / Sequencer / GC Registers */
     case 0x6013c0 ... 0x6013da:
     case 0x6033c0 ... 0x6033da: {
@@ -239,10 +226,17 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
         break;
     }
 
-    /* VGA DAC Registers */
-    case 0x6803c6 ... 0x6803c9: {
-        uint32_t port = 0x3c6 + (addr - 0x6803c6);
-        vga_ioport_write(&s->vga, port, val);
+    /* Display Head & Flat Panel MMIO (0x680000..0x680FFF) */
+    case 0x680000 ... 0x680fff: {
+        if (addr >= 0x6803c6 && addr <= 0x6803c9) {
+            uint32_t port = 0x3c6 + (addr - 0x6803c6);
+            vga_ioport_write(&s->vga, port, val);
+        } else {
+            uint32_t idx = (addr - 0x680000) >> 2;
+            if (idx < 1024) {
+                s->head_regs[idx] = val;
+            }
+        }
         break;
     }
 
@@ -399,6 +393,24 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
             }
         }
     }
+
+    /* Initialize standard VGA Mode 03h (80x25 text) CRTC & Sequencer registers */
+    vga->cr[VGA_CRTC_H_TOTAL] = 0x5f;
+    vga->cr[VGA_CRTC_H_DISP] = 0x4f;         /* 80 columns */
+    vga->cr[VGA_CRTC_H_BLANK_START] = 0x50;
+    vga->cr[VGA_CRTC_H_BLANK_END] = 0x82;
+    vga->cr[VGA_CRTC_H_SYNC_START] = 0x54;
+    vga->cr[VGA_CRTC_H_SYNC_END] = 0x80;
+    vga->cr[VGA_CRTC_V_TOTAL] = 0xbf;
+    vga->cr[VGA_CRTC_OVERFLOW] = 0x1f;
+    vga->cr[VGA_CRTC_MAX_SCAN] = 0x4f;       /* 16 scanlines per row */
+    vga->cr[VGA_CRTC_CURSOR_START] = 0x0e;
+    vga->cr[VGA_CRTC_CURSOR_END] = 0x0f;
+    vga->cr[VGA_CRTC_V_DISP_END] = 0x8f;     /* 400 scanlines -> 25 rows */
+    vga->cr[VGA_CRTC_OFFSET] = 0x28;         /* 40 words -> 80 chars per line */
+    vga->cr[VGA_CRTC_MODE] = 0xa3;
+    vga->sr[VGA_SEQ_CLOCK_MODE] = 0x01;      /* 8 dots per char */
+    vga->gr[VGA_GFX_MISC] = 0x0c;            /* 0xB8000 memory map mode */
 
     vga->con = graphic_console_init(DEVICE(dev), 0, vga->hw_ops, vga);
 
