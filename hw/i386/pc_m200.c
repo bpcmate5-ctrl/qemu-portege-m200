@@ -985,6 +985,16 @@ static void m200_init(MachineState *machine)
         pci_config_set_revision(audio->config, 0x03);
         pci_set_word(audio->config + PCI_SUBSYSTEM_VENDOR_ID, PCI_VENDOR_ID_TOSHIBA);
         pci_set_word(audio->config + PCI_SUBSYSTEM_ID, 0x02c5);
+
+        /* AC'97 Modem (D31:F6) */
+        PCIDevice *modem = pci_create_simple_multifunction(pcms->pcibus,
+                                                          PCI_DEVFN(ICH4M_AC97_DEV, 6),
+                                                          "AC97");
+        pci_config_set_vendor_id(modem->config, PCI_VENDOR_ID_INTEL);
+        pci_config_set_device_id(modem->config, PCI_DEVICE_ID_INTEL_82801DBM_MODEM);
+        pci_config_set_revision(modem->config, 0x03);
+        pci_set_word(modem->config + PCI_SUBSYSTEM_VENDOR_ID, PCI_VENDOR_ID_TOSHIBA);
+        pci_set_word(modem->config + PCI_SUBSYSTEM_ID, 0x0001);
     }
 
     /* Video (NVIDIA GeForce FX Go5200 / NV34M) & Network */
