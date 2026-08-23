@@ -315,7 +315,8 @@ static void i855pm_mch_reset(DeviceState *qdev)
     d->config[I855PM_HOST_BRIDGE_DRA + 1] = 0x04;
     memset(d->wmask + I855PM_HOST_BRIDGE_DRA, 0xff, I855PM_HOST_BRIDGE_DRA_SIZE);
 
-    /* Initialize PAM registers and write masks */
+    /* Initialize PAM registers and write masks (Default 0x00: Reads from ROM) */
+    memset(d->config + I855PM_HOST_BRIDGE_PAM0, 0x00, I855PM_HOST_BRIDGE_PAM_SIZE);
     memset(d->wmask + I855PM_HOST_BRIDGE_PAM0, 0xff, I855PM_HOST_BRIDGE_PAM_SIZE);
 
     /* Initialize SMRAM and ESMRAMC */

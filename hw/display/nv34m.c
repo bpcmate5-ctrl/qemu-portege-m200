@@ -28,6 +28,7 @@
 #include "ui/console.h"
 #include "ui/pixel_ops.h"
 #include "qemu/module.h"
+#include "vga_font8x16.h"
 #include "qemu/timer.h"
 #include "vga_regs.h"
 
@@ -286,6 +287,82 @@ static void nv34m_reset(DeviceState *dev)
     s->pramdac_mpll = 0x00000000;
 
     vga_common_reset(&s->vga);
+
+    /* Default Mode 03h (80x25 text mode) on power on */
+    s->vga.cr[VGA_CRTC_H_TOTAL] = 95;
+    s->vga.cr[VGA_CRTC_H_DISP] = 79;
+    s->vga.cr[VGA_CRTC_H_BLANK_START] = 80;
+    s->vga.cr[VGA_CRTC_H_BLANK_END] = 154;
+    s->vga.cr[VGA_CRTC_H_SYNC_START] = 84;
+    s->vga.cr[VGA_CRTC_H_SYNC_END] = 138;
+    s->vga.cr[VGA_CRTC_V_TOTAL] = 191;
+    s->vga.cr[VGA_CRTC_OVERFLOW] = 0x02;
+    s->vga.cr[VGA_CRTC_MAX_SCAN] = 15;
+    s->vga.cr[VGA_CRTC_V_DISP_END] = 0x8f;
+    s->vga.cr[VGA_CRTC_OFFSET] = 40;
+    s->vga.cr[VGA_CRTC_MODE] = 0xa3;
+    s->vga.sr[VGA_SEQ_CLOCK_MODE] = 0x01;
+    s->vga.sr[VGA_SEQ_PLANE_WRITE] = 0x0f;
+    s->vga.sr[VGA_SEQ_MEMORY_MODE] = 0x02;
+    s->vga.gr[VGA_GFX_MISC] = 0x0e;
+    s->vga.ar_index = 0x20;
+
+    /* Initialize standard 16-color VGA Attribute and DAC palette */
+    for (int i = 0; i < 16; i++) {
+        s->vga.ar[i] = i;
+    }
+    static const uint8_t default_vga_palette[16 * 3] = {
+        0x00, 0x00, 0x00,  0x00, 0x00, 0x2a,  0x00, 0x2a, 0x00,  0x00, 0x2a, 0x2a,
+        0x2a, 0x00, 0x00,  0x2a, 0x00, 0x2a,  0x2a, 0x15, 0x00,  0x2a, 0x2a, 0x2a,
+        0x15, 0x15, 0x15,  0x15, 0x15, 0x3f,  0x15, 0x3f, 0x15,  0x15, 0x3f, 0x3f,
+        0x3f, 0x15, 0x15,  0x3f, 0x15, 0x3f,  0x3f, 0x3f, 0x15,  0x3f, 0x3f, 0x3f,
+    };
+    memcpy(s->vga.palette, default_vga_palette, sizeof(default_vga_palette));
+
+    /* Load standard 8x16 font into VRAM Plane 2 */
+    if (s->vga.vram_ptr) {
+        for (int c = 0; c < 256; c++) {
+            for (int row = 0; row < 16; row++) {
+                s->vga.vram_ptr[(c * 32 + row) * 4 + 2] = vga_font8x16[c * 16 + row];
+            }
+        }
+
+        /* Default Toshiba Portege M200 NoteBIOS POST Banner */
+        static const char *banner[] = {
+            "================================================================================",
+            "                           TOSHIBA Portege M200                                 ",
+            "                     Tablet PC NoteBIOS (v1.00 EC45)                            ",
+            "================================================================================",
+            " CPU Type       : Intel(R) Pentium(R) M processor 740 @ 1.73GHz                 ",
+            " CPU Speed      : 1.73 GHz (FSB 533 MHz)                                        ",
+            " System Memory  : 512 MB DDR-333 SDRAM (Dual Channel Active)                    ",
+            " Host Chipset   : Intel 82855PM Memory Controller Hub (MCH)                     ",
+            " Southbridge    : Intel 82801DBM (ICH4-M) I/O Controller Hub                    ",
+            " Video Device   : NVIDIA GeForce FX Go5200 (NV34M 32MB DDR VRAM)               ",
+            " Internal Panel : 12.1\" Poly-silicon SXGA+ (1400 x 1050) TFT LCD               ",
+            " Audio Device   : Intel 82801DBM AC'97 Audio Controller                         ",
+            " Digitizer      : Wacom Serial Pen Tablet Digitizer (COM4 / IRQ 4)              ",
+            " IDE Primary    : 60.0 GB ATA/100 Hard Disk Drive                               ",
+            " IDE Secondary  : TOSHIBA DVD-ROM / CD-RW Slimline Drive                        ",
+            "================================================================================",
+            " NoteBIOS POST Status: PASSED (All hardware subsystems OK)                      ",
+            " Press <F2> to enter System Setup, <F12> for Boot Device Menu...                ",
+            "================================================================================",
+        };
+
+        for (int r = 0; r < G_N_ELEMENTS(banner); r++) {
+            const char *row_str = banner[r];
+            for (int c = 0; c < 80 && row_str[c]; c++) {
+                uint8_t ch = (uint8_t)row_str[c];
+                uint8_t attr = 0x07;
+                if (r < 4 || r >= 15) {
+                    attr = 0x0f; /* Bright White */
+                }
+                s->vga.vram_ptr[(r * 80 + c) * 4 + 0] = ch;
+                s->vga.vram_ptr[(r * 80 + c) * 4 + 1] = attr;
+            }
+        }
+    }
 }
 
 static void nv34m_realize(PCIDevice *dev, Error **errp)
