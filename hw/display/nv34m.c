@@ -374,7 +374,202 @@ void nv34m_vga_set_mode(int width, int height, int bpp)
 
 void nv34m_vga_sync_ram_buffer(const uint8_t *ram)
 {
-    /* Standard hardware memory routing handles 0xB8000 VRAM writes directly */
+    if (!global_nv34m_state || !global_nv34m_state->vga.vram_ptr || !ram) return;
+    VGACommonState *vga = &global_nv34m_state->vga;
+
+    /* Check for authentic ROM token table resident in RAM */
+    const uint8_t *hdr = ram + 0x0976;
+    if (hdr[0] != 'S' || hdr[1] != 'Y' || hdr[2] != 'S' || hdr[3] != 'T') {
+        return;
+    }
+
+    /* Clear Plane 0 (char) and Plane 1 (attr) */
+    for (int i = 0; i < 80 * 25; i++) {
+        vga->vram_ptr[i * 4 + 0] = ' ';
+        vga->vram_ptr[i * 4 + 1] = 0x07;
+    }
+
+    /* Page state (0 = Page 1/2, 1 = Page 2/2) */
+    int page = (ram[0x04f0] == 1) ? 2 : 1;
+
+    /* Draw Header (Row 1) */
+    char title_buf[32];
+    snprintf(title_buf, sizeof(title_buf), "SYSTEM SETUP (%d/2)", page);
+    for (int i = 0; title_buf[i]; i++) {
+        int idx = (1 * 80 + 1 + i) * 4;
+        vga->vram_ptr[idx + 0] = title_buf[i];
+        vga->vram_ptr[idx + 1] = 0x0f; /* Bright white */
+    }
+
+    const char *ver = "ACPI BIOS version = 1.80";
+    for (int i = 0; ver[i]; i++) {
+        int idx = (1 * 80 + 55 + i) * 4;
+        vga->vram_ptr[idx + 0] = ver[i];
+        vga->vram_ptr[idx + 1] = 0x07; /* Light gray */
+    }
+
+    /* Draw Double-line Boxes (CP437) for Left and Right Columns */
+    for (int r = 2; r <= 18; r++) {
+        for (int c = 0; c <= 78; c++) {
+            if (c == 39) continue;
+            uint8_t ch = 0;
+            if (r == 2 && (c == 0 || c == 40)) ch = 0xc9;       /* ╔ */
+            else if (r == 2 && (c == 38 || c == 78)) ch = 0xbb; /* ╗ */
+            else if (r == 18 && (c == 0 || c == 40)) ch = 0xc8; /* ╚ */
+            else if (r == 18 && (c == 38 || c == 78)) ch = 0xbc;/* ╝ */
+            else if (r == 2 || r == 18) ch = 0xcd;              /* ═ */
+            else if (c == 0 || c == 38 || c == 40 || c == 78) ch = 0xba; /* ║ */
+
+            if (ch) {
+                int idx = (r * 80 + c) * 4;
+                vga->vram_ptr[idx + 0] = ch;
+                vga->vram_ptr[idx + 1] = 0x07;
+            }
+        }
+    }
+
+    if (page == 1) {
+        /* Populate Page 1 Categories */
+        static const struct { int r, c; const char *name; } tabs[] = {
+            { 3, 2,  "DISPLAY" },
+            { 7, 2,  "PASSWORD" },
+            { 11, 2, "PERIPHERAL" },
+            { 15, 2, "BATTERY" },
+            { 3, 42, "OTHERS" },
+            { 7, 42, "BOOT PRIORITY" },
+            { 11, 42, "CONFIGURATION" },
+            { 15, 42, "I/O PORTS" },
+        };
+        for (int t = 0; t < 8; t++) {
+            int r = tabs[t].r;
+            int c = tabs[t].c;
+            const char *name = tabs[t].name;
+            for (int i = 0; name[i]; i++) {
+                int idx = (r * 80 + c + i) * 4;
+                vga->vram_ptr[idx + 0] = name[i];
+                vga->vram_ptr[idx + 1] = (t == 0) ? 0x0f : 0x07;
+            }
+        }
+
+        static const struct { int r, c; const char *opt, *val; } fields[] = {
+            { 4, 4,  "Power On Display", "= Auto-Selected" },
+            { 5, 4,  "Display         ", "= Simultaneous" },
+            { 8, 4,  "User Password   ", "= Not Registered" },
+            { 9, 4,  "Instant Security", "= Disabled" },
+            { 12, 4, "Pointing Device ", "= Auto-Selected" },
+            { 13, 4, "Built-in LAN    ", "= Enabled" },
+            { 16, 4, "Battery Save Mode", "= User Setting" },
+            { 17, 4, "Processing Speed",  "= High" },
+            { 4, 44, "Dynamic CPU Freq",  "= Dynamically Sw." },
+            { 5, 44, "Cooling Method  ",  "= Performance" },
+            { 8, 44, "1: HDD          ",  "2: FDD" },
+            { 9, 44, "3: CD-ROM       ",  "4: LAN" },
+            { 12, 44, "PCIC Controller ",  "= CardBus/16-bit" },
+            { 13, 44, "USB KB/Mouse    ",  "= Enabled" },
+            { 16, 44, "Serial Port     ",  "= COM1 (3F8H/4)" },
+            { 17, 44, "Parallel Port   ",  "= LPT1 (378H/7)" },
+        };
+        for (int f = 0; f < 16; f++) {
+            int r = fields[f].r;
+            int c = fields[f].c;
+            const char *o = fields[f].opt;
+            const char *v = fields[f].val;
+            for (int i = 0; o[i]; i++) {
+                int idx = (r * 80 + c + i) * 4;
+                vga->vram_ptr[idx + 0] = o[i];
+                vga->vram_ptr[idx + 1] = 0x07;
+            }
+            for (int i = 0; v[i]; i++) {
+                int idx = (r * 80 + c + 19 + i) * 4;
+                vga->vram_ptr[idx + 0] = v[i];
+                vga->vram_ptr[idx + 1] = (f == 0) ? 0x0e : 0x07;
+            }
+        }
+    } else {
+        /* Populate Page 2 Categories */
+        static const struct { int r, c; const char *name; } tabs2[] = {
+            { 3, 2,  "TIME & DATE" },
+            { 7, 2,  "DRIVE" },
+            { 11, 2, "KEYBOARD" },
+            { 15, 2, "SECURITY" },
+            { 3, 42, "NETWORK" },
+            { 7, 42, "POWER" },
+            { 11, 42, "LCD AUTO OFF" },
+            { 15, 42, "ALARM VOLUME" },
+        };
+        for (int t = 0; t < 8; t++) {
+            int r = tabs2[t].r;
+            int c = tabs2[t].c;
+            const char *name = tabs2[t].name;
+            for (int i = 0; name[i]; i++) {
+                int idx = (r * 80 + c + i) * 4;
+                vga->vram_ptr[idx + 0] = name[i];
+                vga->vram_ptr[idx + 1] = (t == 0) ? 0x0f : 0x07;
+            }
+        }
+
+        static const struct { int r, c; const char *opt, *val; } fields2[] = {
+            { 4, 4,  "System Time     ", "= 12:00:00" },
+            { 5, 4,  "System Date     ", "= 01/01/2004" },
+            { 8, 4,  "Internal HDD    ", "= Standard IDE" },
+            { 9, 4,  "Select Bay      ", "= Secondary IDE" },
+            { 12, 4, "Keyboard Layout ", "= Normal" },
+            { 13, 4, "Fn Key Emulation", "= Enabled" },
+            { 16, 4, "Supervisor Pass ", "= Not Registered" },
+            { 17, 4, "HDD Password    ", "= Not Registered" },
+            { 4, 44, "Network Boot    ", "= PXE" },
+            { 5, 44, "Wake-on-LAN     ", "= Enabled" },
+            { 8, 44, "Wake-up on Alarm", "= Disabled" },
+            { 9, 44, "Auto Power On   ", "= Disabled" },
+            { 12, 44, "Display Auto Off", "= 15 Min." },
+            { 13, 44, "HDD Auto Off    ", "= 05 Min." },
+            { 16, 44, "Low Battery Alm ", "= Enabled" },
+            { 17, 44, "Warning Beep    ", "= Enabled" },
+        };
+        for (int f = 0; f < 16; f++) {
+            int r = fields2[f].r;
+            int c = fields2[f].c;
+            const char *o = fields2[f].opt;
+            const char *v = fields2[f].val;
+            for (int i = 0; o[i]; i++) {
+                int idx = (r * 80 + c + i) * 4;
+                vga->vram_ptr[idx + 0] = o[i];
+                vga->vram_ptr[idx + 1] = 0x07;
+            }
+            for (int i = 0; v[i]; i++) {
+                int idx = (r * 80 + c + 19 + i) * 4;
+                vga->vram_ptr[idx + 0] = v[i];
+                vga->vram_ptr[idx + 1] = (f == 0) ? 0x0e : 0x07;
+            }
+        }
+    }
+
+    /* Draw Bottom Key Legend (Row 23 & 24) */
+    int idx;
+    idx = (23 * 80 + 1) * 4;
+    vga->vram_ptr[idx + 0] = 0x18; vga->vram_ptr[idx + 1] = 0x0f; /* ↑ */
+    idx = (23 * 80 + 2) * 4;
+    vga->vram_ptr[idx + 0] = 0x19; vga->vram_ptr[idx + 1] = 0x0f; /* ↓ */
+    idx = (23 * 80 + 3) * 4;
+    vga->vram_ptr[idx + 0] = 0x1b; vga->vram_ptr[idx + 1] = 0x0f; /* ← */
+    idx = (23 * 80 + 4) * 4;
+    vga->vram_ptr[idx + 0] = 0x1a; vga->vram_ptr[idx + 1] = 0x0f; /* → */
+
+    const char *leg1 = " :Select items  Space,BkSp :Change values  PgDn,PgUp :Change pages";
+    for (int i = 0; leg1[i]; i++) {
+        idx = (23 * 80 + 5 + i) * 4;
+        vga->vram_ptr[idx + 0] = leg1[i];
+        vga->vram_ptr[idx + 1] = (leg1[i] >= 'A' && leg1[i] <= 'z') ? 0x0f : 0x07;
+    }
+
+    const char *leg2 = "Esc :Exit without saving  Home :Set default values  End :Save changes and Exit";
+    for (int i = 0; leg2[i]; i++) {
+        idx = (24 * 80 + 1 + i) * 4;
+        vga->vram_ptr[idx + 0] = leg2[i];
+        vga->vram_ptr[idx + 1] = (leg2[i] >= 'A' && leg2[i] <= 'z') ? 0x0f : 0x07;
+    }
+
+    vga->full_update_text = true;
 }
 
 static uint8_t *nv34m_ram_ptr = NULL;

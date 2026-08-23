@@ -364,7 +364,7 @@ static uint64_t toshiba_ivt_read(void *opaque, hwaddr addr, unsigned size)
         switch (addr) {
         case 0x20: return 0xf000feb0; /* INT 08h -> System BIOS Timer Tick */
         case 0x24: return 0xf000d16d; /* INT 09h -> System BIOS Keyboard ISR */
-        case 0x40: return 0xc000006f; /* INT 10h -> NVIDIA VBIOS Video Services */
+        case 0x40: return 0xf000f000; /* INT 10h -> System BIOS Video Services (Port 0x180) */
         case 0x44: return 0xf000f84d; /* INT 11h -> Equipment List Services */
         case 0x48: return 0xf000f841; /* INT 12h -> Memory Size Services */
         case 0x4c: return 0xf000ec59; /* INT 13h -> Fixed Disk & Floppy Services */
@@ -606,8 +606,9 @@ static void toshiba_vga_int10_write(void *opaque, hwaddr addr, uint64_t val, uns
     case 0x13: { /* Write String */
         hwaddr str_phys = env->segs[R_ES].base + (env->regs[R_EBP] & 0xffff);
         for (int k = 0; k < cx && (dl + k) < 80 && dh < 25; k++) {
-            uint8_t c = toshiba_system_ram[str_phys + k];
-            toshiba_vga_set_char(dh, dl + k, c, bl ? bl : 0x07);
+            uint8_t c = (al >= 2) ? toshiba_system_ram[str_phys + k * 2] : toshiba_system_ram[str_phys + k];
+            uint8_t at = (al >= 2) ? toshiba_system_ram[str_phys + k * 2 + 1] : (bl ? bl : 0x07);
+            toshiba_vga_set_char(dh, dl + k, c, at);
         }
         if (al & 1) {
             toshiba_system_ram[0x450] = (dl + cx) % 80;
@@ -999,6 +1000,11 @@ static void m200_init(MachineState *machine)
         g_free(vbios_file);
     }
 
+    /* Map 128KB High SMRAM at 0xFEDA0000..0xFEDFFFFF */
+    MemoryRegion *smram_high = g_new(MemoryRegion, 1);
+    memory_region_init_ram(smram_high, NULL, "m200.smram-high", 0x20000, &error_fatal);
+    memory_region_add_subregion_overlap(system_memory, 0xfeda0000, smram_high, 1000);
+
     /* Map 64KB Shadow RAM at 0x000E0000 (preloaded with Module 2 First 64KB at ROM 0x20000) */
     MemoryRegion *shadow_ram_e0000 = g_new(MemoryRegion, 1);
     memory_region_init_ram(shadow_ram_e0000, NULL, "m200.shadow-e0000", 0x10000, &error_fatal);
@@ -1030,8 +1036,8 @@ static void m200_init(MachineState *machine)
                 /* Preload full 512KB ROM into RAM */
                 fseek(f, 0, SEEK_SET);
                 if (fread(ram, 1, 0x80000, f) != 0x80000) {}
-                /* Preload Module 2 Second 64KB into 0xF0000 */
-                fseek(f, 0x30000, SEEK_SET);
+                /* Preload Module 2 System BIOS into 0xF0000 */
+                fseek(f, 0x20000, SEEK_SET);
                 if (fread(memory_region_get_ram_ptr(shadow_ram_f0000), 1, 0x10000, f) == 0x10000) {
                     /* Successfully preloaded System BIOS */
                 }
@@ -1075,6 +1081,7 @@ static void m200_init(MachineState *machine)
 
     /* Initialize BDA (0x00000400..0x000004FF) and System Parameters */
     uint8_t *ram_base = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
+    *(uint32_t *)(ram_base + 0x40) = 0xf000f000; /* INT 10h Video Vector -> 0xF000:F000 */
     *(uint16_t *)(ram_base + 0x98) = 0x0000;
     *(uint16_t *)(ram_base + 0x9a) = 4096;   /* Video Buffer Capacity (4096 bytes) */
     *(uint16_t *)(ram_base + 0x9c) = 0x0000; /* Segment */
@@ -1091,6 +1098,10 @@ static void m200_init(MachineState *machine)
     *(uint16_t *)(ram_base + 0xe00) = 0xffff; /* Option ROM Table Terminator (Segment 0x00E0) */
     *(uint16_t *)(ram_base + 0x410) = 0x4423; /* Equipment word */
     *(uint16_t *)(ram_base + 0x413) = 640;    /* 640KB Base Memory */
+    *(uint16_t *)(ram_base + 0x41a) = 0x001e; /* Keyboard Buffer Head (0x001E) */
+    *(uint16_t *)(ram_base + 0x41c) = 0x001e; /* Keyboard Buffer Tail (0x001E) */
+    *(uint16_t *)(ram_base + 0x480) = 0x001e; /* Keyboard Buffer Start */
+    *(uint16_t *)(ram_base + 0x482) = 0x003e; /* Keyboard Buffer End */
     ram_base[0x449] = 0x03;                   /* Mode 03h (80x25 Color Text) */
     *(uint16_t *)(ram_base + 0x44a) = 80;     /* 80 Columns */
     *(uint16_t *)(ram_base + 0x44c) = 4096;   /* Page size */
@@ -1126,7 +1137,7 @@ static void m200_init(MachineState *machine)
     }
     ivt[0x08] = 0xf000feb0; /* F000:FEB0 (Authentic Toshiba System BIOS Timer Tick) */
     ivt[0x09] = 0xf000d16d; /* F000:D16D (Authentic Toshiba System BIOS Keyboard Handler) */
-    ivt[0x10] = 0xc000006f; /* C000:006F (NVIDIA VBIOS INT 10h Video Service) */
+    ivt[0x10] = 0xf000f000; /* F000:F000 (INT 10h Video Service at Port 0x180) */
     ivt[0x1c] = 0xf000ff53; /* F000:FF53 (User Timer Hook IRET) */
 
     /* Install default stubs in Shadow RAM F0000 */
