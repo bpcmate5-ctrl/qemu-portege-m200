@@ -999,7 +999,7 @@ static void m200_init(MachineState *machine)
         g_free(vbios_file);
     }
 
-    /* Map 64KB Shadow RAM at 0x000E0000 (preloaded with Module 5, writeable for Option ROM init) */
+    /* Map 64KB Shadow RAM at 0x000E0000 (preloaded with Module 2 First 64KB at ROM 0x20000) */
     MemoryRegion *shadow_ram_e0000 = g_new(MemoryRegion, 1);
     memory_region_init_ram(shadow_ram_e0000, NULL, "m200.shadow-e0000", 0x10000, &error_fatal);
     if (machine->firmware) {
@@ -1007,9 +1007,9 @@ static void m200_init(MachineState *machine)
         if (filename) {
             FILE *f = fopen(filename, "rb");
             if (f) {
-                fseek(f, 0x60000, SEEK_SET); /* Module 5 offset in 512KB ROM */
+                fseek(f, 0x20000, SEEK_SET); /* Module 2 First 64KB */
                 if (fread(memory_region_get_ram_ptr(shadow_ram_e0000), 1, 0x10000, f) == 0x10000) {
-                    /* Successfully preloaded Module 5 */
+                    /* Successfully preloaded Module 2 First 64KB */
                 }
                 fclose(f);
             }
@@ -1018,7 +1018,7 @@ static void m200_init(MachineState *machine)
     }
     memory_region_add_subregion_overlap(system_memory, 0xe0000, shadow_ram_e0000, 1000);
 
-    /* Map 64KB Shadow RAM at 0x000F0000 (preloaded with Module 2 System BIOS, writeable for Stage 0x03) */
+    /* Map 64KB Shadow RAM at 0x000F0000 (preloaded with Module 2 Second 64KB at ROM 0x30000) */
     MemoryRegion *shadow_ram_f0000 = g_new(MemoryRegion, 1);
     memory_region_init_ram(shadow_ram_f0000, NULL, "m200.shadow-f0000", 0x10000, &error_fatal);
     if (machine->firmware) {
@@ -1030,8 +1030,8 @@ static void m200_init(MachineState *machine)
                 /* Preload full 512KB ROM into RAM */
                 fseek(f, 0, SEEK_SET);
                 if (fread(ram, 1, 0x80000, f) != 0x80000) {}
-                /* Preload Module 2 System BIOS into 0xF0000 */
-                fseek(f, 0x20000, SEEK_SET);
+                /* Preload Module 2 Second 64KB into 0xF0000 */
+                fseek(f, 0x30000, SEEK_SET);
                 if (fread(memory_region_get_ram_ptr(shadow_ram_f0000), 1, 0x10000, f) == 0x10000) {
                     /* Successfully preloaded System BIOS */
                 }
