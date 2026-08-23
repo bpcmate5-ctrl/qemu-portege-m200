@@ -384,17 +384,7 @@ void nv34m_set_system_ram(uint8_t *ram)
     nv34m_ram_ptr = ram;
 }
 
-static void nv34m_vga_update(void *opaque)
-{
-    NV34MState *s = opaque;
-    VGACommonState *vga = &s->vga;
-    if (nv34m_ram_ptr) {
-        nv34m_vga_sync_ram_buffer(nv34m_ram_ptr);
-    }
-    if (s->default_hw_ops && s->default_hw_ops->gfx_update) {
-        s->default_hw_ops->gfx_update(vga);
-    }
-}
+/* VGA display update is handled by standard vga_update_display via vga_init() */
 
 static void nv34m_realize(PCIDevice *dev, Error **errp)
 {
@@ -439,10 +429,8 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
     vga->sr[VGA_SEQ_CLOCK_MODE] = 0x01;      /* 8 dots per char */
     vga->gr[VGA_GFX_MISC] = 0x0c;            /* 0xB8000 memory map mode */
 
-    static const GraphicHwOps nv34m_graphic_ops = {
-        .gfx_update = nv34m_vga_update,
-    };
-    vga->con = graphic_console_init(DEVICE(dev), 0, &nv34m_graphic_ops, s);
+    /* ar_index bit 5 enables palette - required for text mode rendering */
+    vga->ar_index = 0x20;
 
     s->ramin_buf = g_malloc0(NV34M_RAMIN_SIZE);
 
