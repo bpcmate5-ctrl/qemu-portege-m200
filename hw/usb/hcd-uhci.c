@@ -327,6 +327,10 @@ static void uhci_reset(DeviceState *dev)
         port = &s->ports[i];
         port->ctrl = 0x0080;
         if (port->port.dev && port->port.dev->attached) {
+            port->ctrl |= UHCI_PORT_CCS | UHCI_PORT_CSC;
+            if (port->port.dev->speed == USB_SPEED_LOW) {
+                port->ctrl |= UHCI_PORT_LSDA;
+            }
             usb_port_reset(&port->port);
         }
     }
@@ -472,6 +476,10 @@ static void uhci_port_write(void *opaque, hwaddr addr,
                 if ((val & UHCI_PORT_RESET) &&
                      !(port->ctrl & UHCI_PORT_RESET)) {
                     usb_device_reset(dev);
+                } else if (!(val & UHCI_PORT_RESET) &&
+                            (port->ctrl & UHCI_PORT_RESET)) {
+                    /* End of port reset: root hub automatically enables port */
+                    port->ctrl |= UHCI_PORT_EN | UHCI_PORT_ENC;
                 }
             }
             port->ctrl &= UHCI_PORT_READ_ONLY;
@@ -487,10 +495,16 @@ static void uhci_port_write(void *opaque, hwaddr addr,
     }
 }
 
+static void uhci_process_frame(UHCIState *s);
+
 static uint64_t uhci_port_read(void *opaque, hwaddr addr, unsigned size)
 {
     UHCIState *s = opaque;
     uint32_t val;
+
+    if (s->cmd & UHCI_CMD_RS) {
+        uhci_process_frame(s);
+    }
 
     switch (addr) {
     case UHCI_USBCMD:
@@ -710,6 +724,9 @@ static int uhci_complete_td(UHCIState *s, UHCI_TD *td, UHCIAsync *async,
     if (td->ctrl & TD_CTRL_IOC) {
         *int_mask |= 0x01;
     }
+    uint32_t val;
+    val = cpu_to_le32(td->ctrl);
+    pci_dma_write(&s->dev, (async->td_addr & ~0xf) + 4, &val, sizeof(val));
 
     if (pid == USB_TOKEN_IN) {
         pci_dma_write(&s->dev, td->buffer, async->buf, len);

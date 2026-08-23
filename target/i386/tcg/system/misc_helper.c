@@ -362,10 +362,10 @@ void helper_rdmsr(CPUX86State *env)
         val = env->vm_hsave;
         break;
     case MSR_IA32_PERF_STATUS:
-        /* tsc_increment_by_tick */
-        val = 1000ULL;
-        /* CPU multiplier */
-        val |= (((uint64_t)4ULL) << 40);
+        /* Pentium M Banias/Dothan: bits 12:8 = Current Multiplier (14 = 1.4GHz), bits 7:0 = Voltage */
+        val = (14ULL << 8) | 0x2C;
+        /* Upper 32-bit for 64-bit status */
+        val |= (14ULL << 40);
         break;
 #ifdef TARGET_X86_64
     case MSR_LSTAR:

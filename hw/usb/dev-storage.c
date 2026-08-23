@@ -59,8 +59,8 @@ static const USBDescIface desc_iface_full = {
     .bInterfaceNumber              = 0,
     .bNumEndpoints                 = 2,
     .bInterfaceClass               = USB_CLASS_MASS_STORAGE,
-    .bInterfaceSubClass            = 0x06, /* SCSI */
-    .bInterfaceProtocol            = 0x50, /* Bulk */
+    .bInterfaceSubClass            = 0x04, /* UFI / Floppy */
+    .bInterfaceProtocol            = 0x00, /* CBI */
     .eps = (USBDescEndpoint[]) {
         {
             .bEndpointAddress      = USB_DIR_IN | 0x01,

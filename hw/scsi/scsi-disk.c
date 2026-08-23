@@ -1200,12 +1200,12 @@ static int mode_sense_page(SCSIDiskState *s, int page, uint8_t **p_outbuf,
         /* Transfer rate [kbit/s], 5Mbit/s */
         p[0] = 5000 >> 8;
         p[1] = 5000 & 0xff;
-        /* if a geometry hint is available, use it */
-        p[2] = s->qdev.conf.heads & 0xff;
-        p[3] = s->qdev.conf.secs & 0xff;
+        /* if a geometry hint is available, use it, otherwise default to 1.44MB floppy */
+        p[2] = s->qdev.conf.heads ? (s->qdev.conf.heads & 0xff) : 2;
+        p[3] = s->qdev.conf.secs ? (s->qdev.conf.secs & 0xff) : 18;
         p[4] = s->qdev.blocksize >> 8;
-        p[6] = (s->qdev.conf.cyls >> 8) & 0xff;
-        p[7] = s->qdev.conf.cyls & 0xff;
+        p[6] = s->qdev.conf.cyls ? ((s->qdev.conf.cyls >> 8) & 0xff) : 0x94;
+        p[7] = s->qdev.conf.cyls ? (s->qdev.conf.cyls & 0xff) : 80;
         /* Write precomp start cylinder, disabled */
         p[8] = (s->qdev.conf.cyls >> 8) & 0xff;
         p[9] = s->qdev.conf.cyls & 0xff;
@@ -1287,7 +1287,7 @@ static int mode_sense_page(SCSIDiskState *s, int page, uint8_t **p_outbuf,
         p[19] = (16 * 176) & 0xff;
         break;
 
-     case MODE_PAGE_APPLE_VENDOR:
+    case MODE_PAGE_APPLE_VENDOR:
         if (s->quirks & (1 << SCSI_DISK_QUIRK_MODE_PAGE_APPLE_VENDOR)) {
             length = 0x1e;
             if (page_control == 1) { /* Changeable Values */
@@ -2031,6 +2031,7 @@ static int32_t scsi_disk_emulate_command(SCSIRequest *req, uint8_t *buf)
     case GET_EVENT_STATUS_NOTIFICATION:
     case MECHANISM_STATUS:
     case REQUEST_SENSE:
+    case 0x23: /* READ_FORMAT_CAPACITIES */
         break;
 
     default:
@@ -2076,6 +2077,20 @@ static int32_t scsi_disk_emulate_command(SCSIRequest *req, uint8_t *buf)
         if (buflen < 0) {
             goto illegal_request;
         }
+        break;
+    case 0x23: /* READ_FORMAT_CAPACITIES */
+        buflen = 12;
+        memset(outbuf, 0, buflen);
+        outbuf[3] = 8; /* Capacity list length */
+        /* Descriptor 0: Current capacity (2880 blocks = 0x00000B40, block length = 512 = 0x000200) */
+        outbuf[4] = 0x00;
+        outbuf[5] = 0x00;
+        outbuf[6] = 0x0b;
+        outbuf[7] = 0x40;
+        outbuf[8] = 0x02; /* Descriptor Code: Formatted Media (0x02) */
+        outbuf[9] = 0x00;
+        outbuf[10] = 0x02;
+        outbuf[11] = 0x00;
         break;
     case READ_TOC:
         buflen = scsi_disk_emulate_read_toc(req, outbuf);
@@ -2673,6 +2688,7 @@ static const SCSIReqOps *const scsi_disk_reqops_dispatch[256] = {
     [START_STOP]                      = &scsi_disk_emulate_reqops,
     [ALLOW_MEDIUM_REMOVAL]            = &scsi_disk_emulate_reqops,
     [READ_CAPACITY_10]                = &scsi_disk_emulate_reqops,
+    [0x23]                            = &scsi_disk_emulate_reqops,
     [READ_TOC]                        = &scsi_disk_emulate_reqops,
     [READ_DVD_STRUCTURE]              = &scsi_disk_emulate_reqops,
     [READ_DISC_INFORMATION]           = &scsi_disk_emulate_reqops,

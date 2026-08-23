@@ -34,7 +34,9 @@
 /* TSC handling */
 uint64_t cpu_get_tsc(CPUX86State *env)
 {
-    return cpus_get_elapsed_ticks();
+    int64_t ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    uint64_t freq = env->tsc_khz ? (uint64_t)env->tsc_khz * 1000 : 1400000000ULL;
+    return muldiv64(ns, freq, NANOSECONDS_PER_SECOND);
 }
 
 /* IRQ handling */
