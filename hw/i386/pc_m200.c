@@ -272,6 +272,31 @@ static const MemoryRegionOps toshiba_sio_1e0_ops = {
     },
 };
 
+/* Toshiba LCD Display Controller Port 0xD800..0xD81F */
+static uint64_t toshiba_lcd_d800_read(void *opaque, hwaddr addr, unsigned size)
+{
+    switch (addr) {
+    case 0x00: return 0x0001; /* LCD Enabled */
+    case 0x02: return 0x0000; /* Status Ready */
+    case 0x08: return 0x0000; /* Transfer Ready */
+    default: return 0x0000;
+    }
+}
+
+static void toshiba_lcd_d800_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+{
+}
+
+static const MemoryRegionOps toshiba_lcd_d800_ops = {
+    .read = toshiba_lcd_d800_read,
+    .write = toshiba_lcd_d800_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 4,
+    },
+};
+
 /* Intel ICH4-M APM / SMI Software Control (Ports 0xB2 / 0xB3) */
 static uint64_t toshiba_apmc_read(void *opaque, hwaddr addr, unsigned size)
 {
@@ -1044,6 +1069,12 @@ static void m200_init(MachineState *machine)
     memory_region_init_io(apmc_io, OBJECT(machine), &toshiba_apmc_ops, NULL,
                           "toshiba-apmc-smi", 2);
     memory_region_add_subregion_overlap(system_io, 0xb2, apmc_io, 100);
+
+    /* Map Toshiba LCD Display Controller Port (0xD800..0xD81F) */
+    MemoryRegion *lcd_d800_mr = g_new(MemoryRegion, 1);
+    memory_region_init_io(lcd_d800_mr, OBJECT(machine), &toshiba_lcd_d800_ops, NULL,
+                          "toshiba-lcd-d800", 0x20);
+    memory_region_add_subregion_overlap(system_io, 0xd800, lcd_d800_mr, 100);
 
     /* Initialize BDA (0x00000400..0x000004FF) and System Parameters */
     uint8_t *ram_base = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
