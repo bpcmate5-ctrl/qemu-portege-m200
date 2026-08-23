@@ -273,13 +273,17 @@ static const MemoryRegionOps toshiba_sio_1e0_ops = {
     },
 };
 
-/* Toshiba LCD Display Controller Port 0xD800..0xD81F */
 static uint64_t toshiba_lcd_d800_read(void *opaque, hwaddr addr, unsigned size)
 {
     switch (addr) {
     case 0x00: return 0x0001; /* LCD Enabled */
     case 0x02: return 0x0000; /* Status Ready */
+    case 0x04: return 0x0002; /* Display Controller Ready */
     case 0x08: return 0x0000; /* Transfer Ready */
+    case 0x2c: return 0x0000; /* LCD Timing Status Ready */
+    case 0x2e: return 0x2000; /* Backlight Inverter ON */
+    case 0x38: return 0x0000; /* Panel Frequency Ready */
+    case 0x68: return 0x0800; /* Panel Resolution Ready (1400x1050 SXGA+) */
     default: return 0x0000;
     }
 }
@@ -1073,10 +1077,10 @@ static void m200_init(MachineState *machine)
                           "toshiba-apmc-smi", 2);
     memory_region_add_subregion_overlap(system_io, 0xb2, apmc_io, 100);
 
-    /* Map Toshiba LCD Display Controller Port (0xD800..0xD81F) */
+    /* Map Toshiba LCD Display Controller Port (0xD800..0xD8FF) */
     MemoryRegion *lcd_d800_mr = g_new(MemoryRegion, 1);
     memory_region_init_io(lcd_d800_mr, OBJECT(machine), &toshiba_lcd_d800_ops, NULL,
-                          "toshiba-lcd-d800", 0x20);
+                          "toshiba-lcd-d800", 0x100);
     memory_region_add_subregion_overlap(system_io, 0xd800, lcd_d800_mr, 100);
 
     /* Initialize BDA (0x00000400..0x000004FF) and System Parameters */
