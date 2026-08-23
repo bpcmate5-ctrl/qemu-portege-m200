@@ -1054,6 +1054,7 @@ static void m200_init(MachineState *machine)
     *(uint16_t *)(ram_base + 0x408) = 0x0378; /* LPT1 */
     *(uint16_t *)(ram_base + 0x40e) = 0x00c0; /* EBDA Base Segment (0x00C0 -> 0x00000C00) */
     ram_base[0xc00] = 0x01;                   /* EBDA Size = 1 KB */
+    *(uint16_t *)(ram_base + 0xe00) = 0xffff; /* Option ROM Table Terminator (Segment 0x00E0) */
     *(uint16_t *)(ram_base + 0x410) = 0x4423; /* Equipment word */
     *(uint16_t *)(ram_base + 0x413) = 640;    /* 640KB Base Memory */
     ram_base[0x449] = 0x03;                   /* Mode 03h (80x25 Color Text) */
