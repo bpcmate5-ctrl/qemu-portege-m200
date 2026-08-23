@@ -112,6 +112,7 @@ static inline void pit_load_count(PITChannelState *s, int val)
         val = 0x10000;
     s->count_load_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     s->count = val;
+    s->latch_call_count = 0; /* Reset synthetic counter on new count load */
     pit_irq_timer_update(s, s->count_load_time);
 }
 
@@ -119,7 +120,40 @@ static inline void pit_load_count(PITChannelState *s, int val)
 static void pit_latch_count(PITChannelState *s)
 {
     if (!s->count_latched) {
-        s->latched_count = pit_get_count(s);
+        /*
+         * Work around TCG virtual clock freeze in tight I/O loops.
+         *
+         * On real hardware, the PIT counter decrements at 1.193182 MHz
+         * regardless of CPU activity. In QEMU's TCG mode, the virtual
+         * clock only advances between translation blocks, so tight
+         * polling loops (latch → read → check → loop) see a frozen
+         * counter. This stalls BIOS POST firmware that uses PIT-based
+         * delay/timeout loops.
+         *
+         * We track the number of latch operations and compute a minimum
+         * number of PIT ticks that "should have" elapsed. If the real
+         * virtual-time-based count hasn't moved enough, we use this
+         * synthetic floor instead.
+         */
+        int real_count = pit_get_count(s);
+        
+        /* Each latch call represents ~500 PIT ticks of simulated time.
+         * This is an aggressive overcount to speed up POST timeouts
+         * that would otherwise stall TCG emulation for minutes. */
+        s->latch_call_count++;
+        int synthetic_ticks = s->latch_call_count * 500;
+        int synthetic_count = (s->count - synthetic_ticks) & 0xffff;
+        
+        /* Use whichever has progressed further (lower count) */
+        int real_elapsed = (s->count - real_count) & 0xffff;
+        if (synthetic_ticks > real_elapsed) {
+            s->latched_count = synthetic_count;
+        } else {
+            s->latched_count = real_count;
+            /* Sync synthetic counter to reality when clock catches up */
+            s->latch_call_count = real_elapsed / 10;
+        }
+        
         s->count_latched = s->rw_mode;
     }
 }

@@ -1,0 +1,4 @@
+<script language="JavaScript">
+	alert('To make the diskette, please run the BIOS Launcher from your Windows desktop.');
+	location.replace('index.html#jumpdisk');
+</script>

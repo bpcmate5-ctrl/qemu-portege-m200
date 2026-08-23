@@ -27,10 +27,8 @@
 #include "vga_int.h"
 #include "ui/console.h"
 #include "ui/pixel_ops.h"
-#include "ui/input.h"
 #include "qemu/module.h"
 #include "vga_font8x16.h"
-#include "toshiba_bios_screens.h"
 #include "qemu/timer.h"
 #include "vga_regs.h"
 
@@ -87,9 +85,6 @@ struct NV34MState {
     uint32_t pramdac_mpll;
 
     uint8_t *ramin_buf;
-
-    int bios_screen_mode;
-    QemuInputHandlerState *kbd;
 };
 
 static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
@@ -271,8 +266,6 @@ static const MemoryRegionOps nv34m_mmio_ops = {
     },
 };
 
-static void nv34m_render_screen(NV34MState *s, int mode);
-
 static void nv34m_reset(DeviceState *dev)
 {
     NV34MState *s = NV34M_VGA(dev);
@@ -333,92 +326,9 @@ static void nv34m_reset(DeviceState *dev)
                 s->vga.vram_ptr[(c * 32 + row) * 4 + 2] = vga_font8x16[c * 16 + row];
             }
         }
-
-        nv34m_render_screen(s, 0);
+        memset(s->vga.vram_ptr, 0, 80 * 25 * 4);
     }
 }
-
-static void nv34m_render_screen(NV34MState *s, int mode)
-{
-    if (!s->vga.vram_ptr || mode < 0 || mode > 2) {
-        return;
-    }
-    s->bios_screen_mode = mode;
-
-    const uint8_t *screen_data = NULL;
-    if (mode == 0) {
-        screen_data = toshiba_bios_screen_0;
-    } else if (mode == 1) {
-        screen_data = toshiba_bios_screen_1;
-    } else if (mode == 2) {
-        screen_data = toshiba_bios_screen_2;
-    }
-
-    if (screen_data) {
-        for (int i = 0; i < 80 * 25; i++) {
-            s->vga.vram_ptr[i * 4 + 0] = screen_data[i * 2 + 0];
-            s->vga.vram_ptr[i * 4 + 1] = screen_data[i * 2 + 1];
-        }
-    }
-    s->vga.full_update_text = 1;
-    graphic_hw_invalidate(s->vga.con);
-}
-
-static void nv34m_kbd_event(DeviceState *dev, QemuConsole *src, InputEvent *evt)
-{
-    NV34MState *s = NV34M_VGA(dev);
-    if (evt->type != INPUT_EVENT_KIND_KEY || !evt->u.key.data->down) {
-        return;
-    }
-    int qcode = qemu_input_key_value_to_qcode(evt->u.key.data->key);
-    switch (qcode) {
-    case Q_KEY_CODE_F2:
-        if (s->bios_screen_mode == 1) {
-            s->bios_screen_mode = 2; /* Switch to Page 2 */
-        } else if (s->bios_screen_mode == 2) {
-            s->bios_screen_mode = 1; /* Switch to Page 1 */
-        } else {
-            s->bios_screen_mode = 1; /* Open SYSTEM SETUP (1/2) */
-        }
-        nv34m_render_screen(s, s->bios_screen_mode);
-        break;
-
-    case Q_KEY_CODE_PGDN:
-        if (s->bios_screen_mode == 1) {
-            s->bios_screen_mode = 2;
-            nv34m_render_screen(s, s->bios_screen_mode);
-        }
-        break;
-
-    case Q_KEY_CODE_PGUP:
-        if (s->bios_screen_mode == 2) {
-            s->bios_screen_mode = 1;
-            nv34m_render_screen(s, s->bios_screen_mode);
-        }
-        break;
-
-    case Q_KEY_CODE_F12:
-        s->bios_screen_mode = 3; /* BOOT DEVICE MENU */
-        nv34m_render_screen(s, s->bios_screen_mode);
-        break;
-
-    case Q_KEY_CODE_ESC:
-        if (s->bios_screen_mode != 0) {
-            s->bios_screen_mode = 0; /* Return to POST */
-            nv34m_render_screen(s, s->bios_screen_mode);
-        }
-        break;
-
-    default:
-        break;
-    }
-}
-
-static const QemuInputHandler nv34m_kbd_handler = {
-    .name  = "nv34m-kbd",
-    .mask  = INPUT_EVENT_MASK_KEY,
-    .event = nv34m_kbd_event,
-};
 
 static void nv34m_realize(PCIDevice *dev, Error **errp)
 {
@@ -451,17 +361,11 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
     /* Interrupt routing */
     pci_config_set_interrupt_pin(dev->config, 1); /* Pin A */
 
-    /* Register interactive keyboard handler */
-    s->kbd = qemu_input_handler_register(DEVICE(dev), &nv34m_kbd_handler);
-    qemu_input_handler_activate(s->kbd);
 }
 
 static void nv34m_exit(PCIDevice *dev)
 {
     NV34MState *s = NV34M_VGA(dev);
-    if (s->kbd) {
-        qemu_input_handler_unregister(s->kbd);
-    }
     g_free(s->ramin_buf);
 }
 

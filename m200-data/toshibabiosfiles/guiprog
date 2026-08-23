@@ -1,0 +1,4 @@
+<script language="JavaScript">
+	alert('To install the BIOS, please run the BIOS Launcher from your Windows desktop.');
+	location.replace('index.html#wininst');
+</script>

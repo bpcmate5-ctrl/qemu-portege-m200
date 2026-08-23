@@ -40,7 +40,7 @@
 /* Toshiba Portege M200 Motherboard Straps & Hardware ID (Port 0x85) */
 static uint64_t toshiba_m200_io_read(void *opaque, hwaddr addr, unsigned size)
 {
-    return 0x08; /* Normal Boot mode with Poly-silicon SXGA+ TFT LCD panel */
+    return 0x10; /* Normal S0 Boot mode with AC connected & Keyboard ready */
 }
 
 static void toshiba_m200_io_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)

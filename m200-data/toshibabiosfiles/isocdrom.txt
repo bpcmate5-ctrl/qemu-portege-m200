@@ -1,0 +1,40 @@
+Here are some brief instructions for creating the bootable BIOS Installation
+CD from the provided ISO image.
+
+Drag 'n Drop     Unfortunately the Drag 'n Drop CD application bundled with
+CD:              many Toshiba PC models does not support creating a CD from 
+                 an image.  You'll need to use a different CD burning 
+                 application.
+
+                 One such application for Windows XP is Alex Feinman's free
+                 "ISO Recorder Power Toy". This appears to be a desktop
+                 extension for Windows XP that allows you to right-click on
+                 the ts2_a3v16.iso file and use Windows XP's built-in
+                 CD writing wizard to create the bootable CD.  It's a
+                 reasonable alternative to buying a commercial software
+                 package just to be able to burn an ISO image.  Information
+                 about the ISO Recorder Power Toy is available at
+                 http://isorecorder.alexfeinman.com/isorecorder.htm
+                 
+                 Note:  Toshiba neither recommends nor supports this 
+                 software.  Use it at your own risk.
+                 
+
+Roxio Easy       By default, Easy CD Creator 5 allows you to initiate the ISO
+CD Creator:      image recording process by simply double-clicking the .ISO
+                 file in Windows Explorer.  Browse to C:\TS2_A3V16
+                 and double-click the ts2_a3v16.iso file.
+                 Information about Easy CD Creator is available
+                 at http://www.roxio.com
+                 
+Nero:            Using the Nero Wizard, choose "CD" as the medium (default
+                 for CD-R and CD-RW drives), and click Next. On the
+                 following dialogs, choose Compile a new CD, Other CD formats,
+                 Create a CD from an image file, clicking Next after each
+                 selection, then click Finish.  In the File Open dialog,
+                 browse to C:\TS2_A3V16,
+                 select ts2_a3v16.iso as the image file and click Open.
+                 From the Burn dialog, select your desired burn parameters,
+                 and burn the CD. Information about Nero is available at
+                 http://www.ahead.de
+

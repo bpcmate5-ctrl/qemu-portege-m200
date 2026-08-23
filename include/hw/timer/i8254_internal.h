@@ -29,6 +29,11 @@
 #include "hw/timer/i8254.h"
 #include "qemu/timer.h"
 
+#define RW_STATE_LSB   1
+#define RW_STATE_MSB   2
+#define RW_STATE_WORD0 3
+#define RW_STATE_WORD1 4
+
 typedef struct PITChannelState {
     int count; /* can be 65536 */
     uint16_t latched_count;
@@ -43,6 +48,8 @@ typedef struct PITChannelState {
     uint8_t bcd; /* not supported */
     uint8_t gate; /* timer start */
     int64_t count_load_time;
+    /* Synthetic latch counter for TCG tight-loop workaround */
+    uint32_t latch_call_count;
     /* irq handling */
     int64_t next_transition_time;
     QEMUTimer *irq_timer;

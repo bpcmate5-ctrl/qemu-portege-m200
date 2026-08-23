@@ -1,0 +1,376 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<!-- 2005-11-30 -->
+<html>
+<head>
+	<title>Toshiba Flash BIOS</title>
+	<style type="text/css">
+		PRE, TT { font-family : "Courier New", Courier, monospace; }
+		.topHeading { font-family : Arial, Helvetica, sans-serif; font-size : 18px; font-weight : bold; color : #000000; }
+		.sectionHeading { font-family : Arial, Helvetica, sans-serif; font-size : 15px; font-weight : bold; color : #000000; }
+		TD { font-family : Arial, Helvetica, sans-serif; font-size : 12px; color : #000000; vertical-align : top; }
+		A:ACTIVE, A:LINK, A:FOCUS, A:VISITED { font-family : Arial, Helvetica, sans-serif; font-size : 12px; color : #0000ff; text-decoration : underline; }
+		A:HOVER { font-family : Arial, Helvetica, sans-serif; font-size : 12px; color : #ff0000; text-decoration : none; }
+
+	</style>
+</head>
+
+<body>
+	<table>
+		<tr>
+			<td>
+				<img src="tlg00.gif" width="128" height="23" border="0" alt=""><p>
+				<span class="topHeading">Flash BIOS version 1.80 for Portege M200</span>
+				<p>
+
+				<b>This BIOS is applicable to the following models:</b><p>
+<ul>
+	<li>Portege M200</li>
+	<li>Portege M200-S218TD</li>
+	<li>Portege M200-S838</li>
+	<li>Portege M205</li>
+	<li>Portege M205-S809</li>
+	<li>Portege M205-S810</li>
+</ul>
+				<p>
+				For purposes of this document, the term <b>Portege M200</b> is used to generically refer to all of the models listed above.
+				<p>
+				This BIOS version is Windows XP compatible and supports Plug and Play, and ACPI functionality.
+				<p><br>
+
+				<table bgcolor="#cccccc" border="1" align="center" width="90%" cellpadding="5">
+					<tr>
+						<td align="center">
+							<b>CAUTION</b>
+						</td>
+					</tr>
+					<tr>
+						<td>
+							During the upgrading of your computers BIOS, if the computer loses power or
+							fails to complete the process of upgrading the BIOS, the existing BIOS in
+							the computer may become damaged.  Toshiba HIGHLY recommends that the computer
+							is powered via the AC adapter during the entire BIOS update process.
+							<p>
+							In the event of a power loss during the BIOS update process, the BIOS Key
+							Installation Method, described below, can sometimes be used to recover from
+							the failure.  If it does not, you'll need to have your computer serviced by a
+							Toshiba Authorized Service Provider (ASP).  You can select an ASP in your
+							area at <a href="http://pcrepair.toshiba.com" target="_blank">http://pcrepair.toshiba.com</a>
+							<p>
+							Toshiba also recommends that you disconnect all peripheral devices from your
+							computer before you perform the BIOS update.  Peripheral devices include, but
+							are not limited to, docking devices (Desk Stations, port replicators), PCMCIA
+							and CardBus cards, USB and IEEE 1394 devices, printers, scanners, digital
+							cameras, etc.
+							<p>
+							On some models, it is not unusual to see a CMOS checksum error when you first
+							reboot the computer after installing the new BIOS.  If you see this message
+							on your screen, press F1 as instructed.  This displays the "TSETUP" screen.
+							Press <End> to save the CMOS data.  You won't see the CMOS checksum error
+							again.
+						</td>
+					</tr>
+				</table>
+				<p><br>
+
+				<b>There are five options for installing this BIOS release:</b>
+				<ol>
+					<li><a href="#wininst">From within Windows</a> NT-based operating systems (XP, 2000, NT 4.0) using the Windows-based BIOS installer.</li><p>
+					<li><a href="#jumpdisk">From the bootable BIOS installation diskette</a>.  This is the recommeded procedure whenever a diskette drive (internal, USB, or PCMCIA) is available on the target system.</li><p>
+					<li><a href="#f12">At startup by holding down the key immediately to the left of the spacebar.</a></li><p>
+					<li><a href="#cdrom">From the bootable BIOS installation CD-ROM</a></li><p>
+					<li><a href="#chgbios">Run <tt>chgbiosa.exe</tt> at the command prompt.</a></li>
+				</ol>
+				<p><br>
+
+				<ol>
+<a name="wininst"><hr width="100%"></a>
+					<li>
+						<span class="sectionHeading">Installation from within Windows NT/2000/XP</span>&nbsp;&nbsp;&nbsp;&nbsp;<a href="guiProg">Install Now</a><br>
+						This release offers the option to install the BIOS directly from within
+						Windows NT-based operating systems.  To do so, simply select the 'Windows
+						Installation' option from the Launcher menu, and click 'Ok'.
+						<p>
+						<b>Important Information Regarding This Installation Method</b><br>
+						Please close all programs before executing the Windows NT-based installer.
+						<p>
+						Due to the somewhat increased risk of errors updating the BIOS from within
+						Windows (as compared to using the boot diskette method), it is HIGHLY
+						recommended that the computer be connected to AC power via the AC adapter,
+						and that the power-save mode is set to 'Full Power' or the equivalent while
+						installing the BIOS.
+						<p>
+						The Windows NT-based BIOS installer, P0009V180.EXE, will install the flash
+						BIOS when run under Windows NT 4.0, Windows 2000, or Windows XP.
+						<p>
+						The Windows NT-based installer requires Administrator priveleges on the
+						target system, and, for Windows 2000/XP, requires that the Toshiba Value-
+						added Logic Device driver (TVALD, or ACPI common modules) be installed and
+						working.
+						<p>
+						Windows 95, 98, and Me are not supported.  If executed under Windows 9x/Me,
+						the Launcher will not offer the option to install from within Windows.
+					</li><p><br>
+<a name="jumpdisk"><hr width="100%"></a>
+					<li>
+						<span class="sectionHeading">Boot Diskette Installation Method (Recommended)</span>&nbsp;&nbsp;&nbsp;&nbsp;<a href="dskProg">Make Diskette Now</a><br>
+						The BIOS installation launcher offers the option to create a bootable BIOS
+						installation diskette.  Simply select 'Diskette Installation' from the
+						Launcher menu and click 'Ok'.  You'll need to have a diskette drive
+						(internal, USB, or PCMCIA) installed, and a formatted 1.44MB diskette
+						available.
+						<p>
+						Once the BIOS installation diskette has been created, install the BIOS
+						using the following steps:
+						<p>
+						<ol start="1">
+							<li>Connect the computer to AC power using the AC adapter.</li>
+							<li>Close all open programs</li>
+							<li>Insert the BIOS installation diskette into your diskette drive (A:)</li>
+							<li>Shut down the operating system.  With Windows, you may choose to Restart rather than shutting down.</li>
+							<li>If necessary, restart the computer by pressing Ctrl-Alt-Del or turning the computer OFF then on again</li>
+						</ol>
+						<p>
+						The computer will boot MS-DOS from the BIOS installation diskette, and
+						initiate the Flash BIOS installation routine.  Please note that on systems
+						where only a USB-connected diskette drive is supported, you can force the
+						computer to boot from the USB-connected diskette by holding down the "U" key,
+						when powering-on the system.
+
+						When the Flash BIOS update is complete, a message like the one below will be
+						displayed:<pre>
+Please push the RESET SW (or turn AC power OFF/ON) to restart!
+
+                     ROM Write Successful!
+                     Utility Finished!</pre>
+						<p>
+						Eject the diskette from drive A: and turn the computer OFF then ON, or press
+						the reset switch to restart your computer.
+						<p>
+
+						<b>Additional Information Regarding This Installation Method</b><br>
+						If you are unable to use the Windows self-extractor, the self-extracting ZIP archive can be extracted using PKUnZip, Info-Zip, or an equivalent UnZIP utility.  The Zip archive was created with Info-Zip (<a href="http://www.info-zip.org" target="_blank">http://www.info-zip.org</a>) and the self-extractor (SFX) is WinZip (<a href="http://www.winzip.com" target="_blank">http://www.winzip.com</a>)
+						<p>
+						The WinImage self-extracting diskette image, 1395D18.EXE, is a 32-bit Windows application that requires Windows 9x, Me, NT, 2000, or XP.  Information about WinImage is available at <a href="http://www.winimage.com" target="_blank">http://www.winimage.com</a>.
+						<p>
+						For Linux or other operating systems, you can use the boot CD-ROM method or you can create the BIOS installation diskette on a Windows-based computer, and boot the Toshiba notebook using the BIOS installation diskette.
+						<p>
+						<br>
+					</li><p><br>
+<a name="f12"><hr width="100%"></a>
+					<li>
+						<span class="sectionHeading">BIOS Key Installation Method</span><br>
+						Your Toshiba computer has a special keyboard function to install an
+						updated BIOS image.  In this section, the term "BIOS key" refers to the
+						key immediately to the left of the spacebar.
+						<p>
+						To use this function, you can use the BIOS installation diskette created
+						using method 1, above, or simply copy <tt>chgbiosa.exe</tt> and <tt>BIO0009T.COM</tt> to a
+						diskette.  Then insert the diskette and hold down the BIOS key while the
+						computer is powered on.  The computer MUST be in BOOT mode, not Resume
+						or hibernate mode.
+						<p>
+						This installation method will only work with the internal keyboard.  If
+						your computer is docked with the display closed and you are using an external
+						keyboard, the computer will need to be undocked and the internal keyboard's
+						key immediately to the left of the spacebar used.
+						<p>
+						When the computer starts up with the BIOS key depressed, the following
+						message appears:<pre>
+Ready for BIOS update. Place the BIOS diskette in the drive, and press
+any key when ready to proceed.</pre>
+						<p>
+						<b>Note:</b> On some models (Satellite 5005 and others) where a system status LCD is
+						included, this and all messages displayed during the BIOS key installation
+						processs will appear in the system status LCD rather than on the main
+						display panel.
+						<p>
+						Insert the diskette that contains <tt>chgbiosa.exe</tt> and <tt>BIO0009T.COM</tt>,
+						and press any key.  The <tt>chgbiosa</tt> program will automatically load the
+						<tt>BIO0009T.COM</tt> file.
+					</li><p><br>
+
+<a name="cdrom"><hr width="100%"></a>
+					<li>
+						<span class="sectionHeading">Boot CD-ROM Installation Method</span>&nbsp;&nbsp;&nbsp;<small><a href="cdrProg">Create CD-ROM Now</a></small><br>
+						If your Toshiba PC is equipped with a bootable CD-ROM device (CD-ROM,
+						DVD-ROM, DVD-RW, DVD-Multi, etc.), and you have access to a CD writer
+						(burner, either installed in your Toshiba PC or in another PC), you can
+						create a bootable BIOS installation CD-ROM using the ISO CD image,
+						<tt>3M200V18.ISO</tt>, provided in this distribution.
+						<p>
+						<b>If you have CD burning software on your computer</b>, chances are good it has set itself up as the default handler for ISO CD-ROM images.  If this is the case, the link above, and the option to create the bootable CD-ROM from the BIOS Launcher, will launch your CD burning software, ready to burn the ISO image to CD.  If your software hasn't set itself up as the default handler for ISO images, we'll recognize that fact, and let you know.
+						<p>
+						Once you create the bootable CD-ROM, simply boot your computer from the resulting CD.  To boot from CD, you can either hold down the "C" key while you turn your computer on, or you can use HWSetup to change the boot priority so the CD drive boots before the HDD.
+						<p>
+						Note, if your CD burner supports it, you can use a rewritable CD (CD-RW) disc
+						to create the bootable BIOS installation CD-ROM.  Be sure to erase the
+						rewritable disc (if it has data on it) before you proceed.  Once you are
+						finished updating your system's DMI values, you can erase and re-use the rewritable
+						disc.
+						<p>
+						<b style="color:#ff0000">IMPORTANT NOTE:</b> Creating the bootable BIOS installation CD requires a specific set of steps that is unique to each CD authoring application.You cannot simply copy the ISO image to a blank CD and expect to be able to boot from it.
+						<p>
+<p>
+Here are brief instructions for creating a CD from the ISO image using widely available software.
+<p>
+<b>Roxio Easy CD Creator:</b><br>
+Easy CD Creator 5, bundled with some Toshiba PCs, allows you to initiate the ISO image to CD burning process by simply double-clicking the .ISO file in Windows Explorer. Simply browse to the folder into which you downloaded the ISO image file and double-click to launch Easy CD Creator. Then put a blank CD-R media in your drive and click on the 'Record' button to begin creating the CD.
+<p>
+Information about Easy CD Creator is available at <a href="http://www.roxio.com" target="_blank">http://www.roxio.com</a>
+<p><br>
+
+<b>Nero:</b><br>
+Nero 6 is available for download as a fully-functional demo. Nero can be used to create a CD from your ISO image using either of the two following techniques:
+<ol>
+	<li>In Nero Burning ROM go to menu option 'Recorder --> Burn Image' and navigate to the drive/folder containing the ISO image you wish to burn to CD.</li><p>
+	<li>In Nero Express select the option for 'Disc Image or Saved Project' to select the ISO image file and burn to CD.</li>
+</ol>
+<p>
+More information about Nero 6 and a downloadable demo is available at
+<a href="http://www.nero.com" target="_blank">http://www.nero.com</a>
+<p><br>
+
+<b>Drag 'n Drop CD:</b><br>
+The Drag 'n Drop CD application bundled with some Toshiba PC models does not
+support creating a CD from an ISO image.  You'll need to use a different CD
+burning application. If Roxio Easy CD Creator (see above) is not on your PC,
+one application that can be used with Windows XP is Alex Feinman's free "ISO
+Recorder Power Toy". This software allows you to right-click on .iso files and
+use Windows XP's built-in CD writing wizard to create CDs from ISO image files.
+<p>
+Information about the ISO Recorder Power Toy is available at
+<a href="http://isorecorder.alexfeinman.com/isorecorder.htm" target="_blank">http://isorecorder.alexfeinman.com/isorecorder.htm</a>
+<p><br>
+
+Note: Information about non-bundled software is provided "for your
+information".  Toshiba neither recommends nor supports software that is not
+bundled with our computers or purchased from toshibadirect.com.
+					</li><p><br>
+<a name="chgbios"><hr width="100%"></a>
+					<li>
+						<span class="sectionHeading">Run <tt>chgbiosa.exe</tt> at the Command Prompt</span><br>
+						The <tt>chgbiosa.exe</tt> program is designed to be run from the MS-DOS command
+						prompt.  It cannot be run in a DOS box inside of Windows, OS/2 or other
+						operating systems.  It also will not run if a Memory Manager, like EMM386,
+						is loaded.
+						<p>
+						The <tt>chgbiosa.exe</tt> program can be run from a floppy disk, hard drive, or
+						PCMCIA drive.  However, you will need a floppy diskette (high or low density)
+						in your A: drive at the time the <tt>chgbiosa.exe</tt> program is run.
+						<p>
+						When the <tt>chgbiosa.exe</tt> program is executed by itself, it will prompt you
+						to specify where the BIOS image file, <tt>BIO0009T.COM</tt> is located.  Enter
+						the complete path and file name. Example: <tt>C:\3m200v18\BIO0009T.COM</tt>.
+						<p>
+						<b>Note:</b> If your path for BIO0009T.COM is anywhere other than the root directory of the A: drive (<tt>A:\BIO0009T.COM</tt>), <tt>chgbiosa.exe</tt> will copy the BIOS image file from its current location to the root directory of A: drive.
+						<p>
+						Optionally, the <tt>chgbiosa</tt> program can also be run from a single command
+						which includes the path to the <tt>BIO0009T.COM</tt> file.  Example: <tt>chgbiosa C:\3m200v18\BIO0009T.COM</tt>
+					</li><p>
+				</ol>
+				<p>
+				<hr>
+ACPI Flash BIOS version 1.80 for Portege M200
+<p>
+<u><b>Change History</b></u><p>
+<ul>
+	<b>Version 1.80 &nbsp;&nbsp;&nbsp;11-01-2005</b>
+	<ul type="disc">
+		<li>Improved stability with a specific vendor's memory module.
+	</ul>
+	<p>
+	<b>Version 1.70 &nbsp;&nbsp;&nbsp;08-08-2005</b>
+	<ul type="disc">
+		<li>An Intel Pentium-M microcode update was applied.
+	</ul>
+	<p>
+	<b>Version 1.60 &nbsp;&nbsp;&nbsp;07-27-2004</b>
+	<ul type="disc">
+		<li>Corrected an issue where LAN (Network) boot was not available after setting LAN (Network) as any priority in "Boot Priority" setting.
+		<li>Corrected an issue where the system would sometimes blue-screen after standby/resume on Windows.
+	</ul>
+	<p>
+	<b>Version 1.40 &nbsp;&nbsp;&nbsp;07-16-2004</b>
+	<ul type="disc">
+		<li>Made a change to support CPU Dothan B1-step.
+	</ul>
+	<p>
+	<b>Version 1.30 &nbsp;&nbsp;&nbsp;03-22-2004</b>
+	<ul type="disc">
+		<li>Added support to boot from SD cards of the following sizes: 16MB, 32MB, 64MB, 128MB, 256MB and 512MB.
+	</ul>
+	<p>
+	<b>Version 1.20 &nbsp;&nbsp;&nbsp;02-25-2004</b>
+	<ul type="disc">
+		<li>A change was made to include a description for Calexico2 in the Intel Logo at system start-up.
+		<li>Made a change to ensure that an external USB HDD, USB memory, etc. when connected to the #4 USB port on the Advanced Port Replicator III will be safely removed after stopping the device.
+		<li>A change was made to ensure the system will recognize the Advanced Port Replicator III or Tablet Multi-Dock at the next docking if the eject switch was pressed twice prior to ejecting the system.
+	</ul>
+	<p>
+	<b>Version 1.10 &nbsp;&nbsp;&nbsp;01-29-2004</b>
+	<ul type="disc">
+		<li>Initial production BIOS for Portege M200/M205
+	</ul>
+	<p>
+</ul>
+
+<p><hr><p>
+				<table>
+					<tr>
+						<td colspan="3"><b>This archive contains the following files:</b></td>
+					</tr>
+					<tr>
+						<td>README.TXT</td>
+						<td><img src="dot_clear.gif" width="5" height="1" border="0" alt=""></td>
+						<td>Installation/usage instructions in ASCII text format</td>
+					</tr>
+					<tr>
+						<td>README.COM</td>
+						<td><img src="dot_clear.gif" width="5" height="1" border="0" alt=""></td>
+						<td>Self-displaying version of installation/usage instructions</td>
+					</tr>
+					<tr>
+						<td>1395D18.EXE</td>
+						<td><img src="dot_clear.gif" width="5" height="1" border="0" alt=""></td>
+						<td>Self-extracting diskette image of BIOS install diskette</td>
+					</tr>
+					<tr>
+						<td>BIO0009T.COM</td>
+						<td><img src="dot_clear.gif" width="5" height="1" border="0" alt=""></td>
+						<td>Flash BIOS 1.80 image for Portege M200 (provided here for installation methods 3 and 5)</td>
+					</tr>
+					<tr>
+						<td>chgbiosa.exe</td>
+						<td><img src="dot_clear.gif" width="5" height="1" border="0" alt=""></td>
+						<td>Flash BIOS update utility version version 4.34 (provided here for installation methods 3 and 5)</td>
+					</tr>
+					<tr>
+						<td>P0009V180.EXE</td>
+						<td><img src="dot_clear.gif" width="5" height="1" border="0" alt=""></td>
+						<td>Windows-installed BIOS package</td>
+					</tr>
+					<tr>
+						<td>LAUNCHER.EXE</td>
+						<td><img src="dot_clear.gif" width="5" height="1" border="0" alt=""></td>
+						<td>BIOS Installation Launcher application. The Launcher displays a Windows dialog from which you can choose a BIOS installation option appropriate for your system and Windows version.</td>
+					</tr>
+					<tr>
+						<td>3M200V18.ISO</td>
+						<td><img src="dot_clear.gif" width="5" height="1" border="0" alt=""></td>
+						<td>ISO Image of bootable BIOS Installation CD-ROM See instructions below regarding the use of this image.</td>
+					</tr>
+
+				<!--
+					<tr>
+						<td></td>
+						<td><img src="dot_clear.gif" width="5" height="1" border="0" alt=""></td>
+						<td></td>
+					</tr>
+				 -->
+				</table>
+				<p>
+			</td>
+		</tr>
+	</table>
+</body>
+</html>
