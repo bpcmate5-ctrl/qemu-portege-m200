@@ -1078,8 +1078,12 @@ static void m200_init(MachineState *machine)
 
     /* Initialize BDA (0x00000400..0x000004FF) and System Parameters */
     uint8_t *ram_base = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
-    *(uint16_t *)(ram_base + 0xa0) = 0x0000; /* Video Text Framebuffer Offset */
-    *(uint16_t *)(ram_base + 0xa2) = 0xb800; /* Video Text Framebuffer Segment (0x000B8000) */
+    *(uint16_t *)(ram_base + 0x98) = 0x0000;
+    *(uint16_t *)(ram_base + 0x9a) = 4096;   /* Video Buffer Capacity (4096 bytes) */
+    *(uint16_t *)(ram_base + 0x9c) = 0x0000; /* Segment */
+    *(uint16_t *)(ram_base + 0x9e) = 0x0000; /* Video Text Framebuffer Destination Offset */
+    *(uint16_t *)(ram_base + 0xa0) = 0xb800; /* Video Text Framebuffer Destination Segment (0x000B8000) */
+    *(uint16_t *)(ram_base + 0xa2) = 0xb800; /* Secondary Segment */
     *(uint16_t *)(ram_base + 0x400) = 0x03f8; /* COM1 */
     *(uint16_t *)(ram_base + 0x402) = 0x02f8; /* COM2 */
     *(uint16_t *)(ram_base + 0x404) = 0x03e8; /* COM3 */
