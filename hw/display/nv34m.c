@@ -360,6 +360,23 @@ void nv34m_vga_clear_screen(uint8_t attr)
     }
 }
 
+void nv34m_vga_set_mode(int width, int height, int bpp)
+{
+    if (!global_nv34m_state || !global_nv34m_state->vga.con) return;
+    VGACommonState *vga = &global_nv34m_state->vga;
+    if (bpp == 0) {
+        /* Text mode 80x25 */
+        vga->graphic_mode = 0;
+        qemu_console_resize(vga->con, 640, 400);
+        vga->full_update_text = true;
+    } else {
+        /* Graphical mode */
+        vga->graphic_mode = 1;
+        qemu_console_resize(vga->con, width, height);
+        vga->full_update_gfx = true;
+    }
+}
+
 static void nv34m_realize(PCIDevice *dev, Error **errp)
 {
     NV34MState *s = NV34M_VGA(dev);

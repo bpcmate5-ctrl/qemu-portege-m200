@@ -272,6 +272,40 @@ static const MemoryRegionOps toshiba_sio_1e0_ops = {
     },
 };
 
+/* Intel ICH4-M APM / SMI Software Control (Ports 0xB2 / 0xB3) */
+static uint64_t toshiba_apmc_read(void *opaque, hwaddr addr, unsigned size)
+{
+    return 0x00;
+}
+
+static void toshiba_apmc_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+{
+    CPUState *cpu = first_cpu;
+    if (!cpu) return;
+    cpu_synchronize_state(cpu);
+    X86CPU *x86_cpu = X86_CPU(cpu);
+    CPUX86State *env = &x86_cpu->env;
+
+    uint8_t cmd = val & 0xff;
+    fprintf(stderr, ">>> [TOSHIBA SMM SMI TRIGGER PORT 0xB2] CMD=0x%02X <<<\n", cmd);
+
+    if (cmd == 0xc1) {
+        /* Toshiba SMM Signature 'TX\x00\x01' in EAX */
+        env->regs[R_EAX] = 0x74580001;
+        env->regs[R_EBX] = 0x00000000;
+    }
+}
+
+static const MemoryRegionOps toshiba_apmc_ops = {
+    .read = toshiba_apmc_read,
+    .write = toshiba_apmc_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 2,
+    },
+};
+
 /* Port 0x64 KBC Status (Bit 2 = SYSF: System POST Self-Test Passed, Normal Boot) */
 static uint64_t toshiba_kbc_status_read(void *opaque, hwaddr addr, unsigned size)
 {
@@ -377,11 +411,21 @@ static void toshiba_vga_int10_write(void *opaque, hwaddr addr, uint64_t val, uns
 
     switch (ah) {
     case 0x00: /* Set Video Mode */
-        toshiba_system_ram[0x449] = al & 0x7f;
-        *(uint16_t *)(toshiba_system_ram + 0x44a) = 80;
-        toshiba_system_ram[0x484] = 24;
-        *(uint16_t *)(toshiba_system_ram + 0x450) = 0x0000;
-        nv34m_vga_clear_screen(0x07);
+        if (al == 0x12) {
+            /* Mode 12h: 640x480 16-color graphics */
+            toshiba_system_ram[0x449] = 0x12;
+            *(uint16_t *)(toshiba_system_ram + 0x44a) = 80;
+            toshiba_system_ram[0x484] = 29;
+            nv34m_vga_set_mode(640, 480, 4);
+        } else {
+            /* Mode 03h: 80x25 text mode */
+            toshiba_system_ram[0x449] = 0x03;
+            *(uint16_t *)(toshiba_system_ram + 0x44a) = 80;
+            toshiba_system_ram[0x484] = 24;
+            *(uint16_t *)(toshiba_system_ram + 0x450) = 0x0000;
+            nv34m_vga_set_mode(640, 400, 0);
+            nv34m_vga_clear_screen(0x07);
+        }
         env->regs[R_EAX] = (env->regs[R_EAX] & ~0xff) | 0x30;
         break;
 
@@ -583,6 +627,14 @@ static void toshiba_vga_int10_write(void *opaque, hwaddr addr, uint64_t val, uns
             break;
         }
         case 0x02: { /* Set VBE Mode */
+            uint16_t mode = env->regs[R_EBX] & 0x01ff;
+            if (mode == 0x0105) {
+                nv34m_vga_set_mode(1024, 768, 8);
+            } else if (mode == 0x0103) {
+                nv34m_vga_set_mode(800, 600, 8);
+            } else {
+                nv34m_vga_set_mode(640, 480, 8);
+            }
             toshiba_system_ram[0x449] = 0x5f; /* VBE Mode */
             env->regs[R_EAX] = (env->regs[R_EAX] & ~0xffff) | 0x004f;
             break;
@@ -986,6 +1038,12 @@ static void m200_init(MachineState *machine)
     memory_region_init_io(sio_1e0_mr, OBJECT(machine), &toshiba_sio_1e0_ops, NULL,
                           "toshiba-sio-1e0", 8);
     memory_region_add_subregion_overlap(system_io, 0x1e0, sio_1e0_mr, 100);
+
+    /* Map Intel ICH4-M APM / Toshiba SMI Control Port (0xB2/0xB3) */
+    MemoryRegion *apmc_io = g_new(MemoryRegion, 1);
+    memory_region_init_io(apmc_io, OBJECT(machine), &toshiba_apmc_ops, NULL,
+                          "toshiba-apmc-smi", 2);
+    memory_region_add_subregion_overlap(system_io, 0xb2, apmc_io, 100);
 
     /* Initialize BDA (0x00000400..0x000004FF) and System Parameters */
     uint8_t *ram_base = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
