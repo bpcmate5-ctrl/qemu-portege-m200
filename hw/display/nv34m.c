@@ -374,6 +374,15 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
 
     vga_init(vga, OBJECT(dev), pci_address_space(dev), pci_address_space_io(dev), true);
 
+    /* Load standard IBM CP437 8x16 font glyphs into Plane 2 of VRAM */
+    if (vga->vram_ptr) {
+        for (int ch = 0; ch < 256; ch++) {
+            for (int line = 0; line < 16; line++) {
+                vga->vram_ptr[2 + (ch * 32 + line) * 4] = vga_font8x16[ch * 16 + line];
+            }
+        }
+    }
+
     vga->con = graphic_console_init(DEVICE(dev), 0, vga->hw_ops, vga);
 
     s->ramin_buf = g_malloc0(NV34M_RAMIN_SIZE);

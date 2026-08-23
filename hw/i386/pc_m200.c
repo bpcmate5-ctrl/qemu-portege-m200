@@ -36,6 +36,7 @@
 #include "hw/display/nv34m.h"
 #include "hw/char/serial-isa.h"
 #include "chardev/char.h"
+#include "system/hw_accel.h"
 #include "qemu/datadir.h"
 #include "hw/core/loader.h"
 
@@ -329,6 +330,7 @@ static void toshiba_vga_int10_write(void *opaque, hwaddr addr, uint64_t val, uns
 {
     CPUState *cpu = first_cpu;
     if (!cpu || !toshiba_system_ram) return;
+    cpu_synchronize_state(cpu);
     X86CPU *x86_cpu = X86_CPU(cpu);
     CPUX86State *env = &x86_cpu->env;
 
@@ -918,11 +920,15 @@ static void m200_init(MachineState *machine)
             FILE *f = fopen(filename, "rb");
             if (f) {
                 uint8_t *ram = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
-                /* Preload full 512KB ROM modules into low memory working segments */
-                fseek(f, 0, SEEK_SET);
-                if (fread(ram, 1, 0x80000, f) != 0x80000) {
-                    /* Read complete */
-                }
+                /* Preload Module 3 (POST Kernel Screen Writer) at 0x30000 */
+                fseek(f, 0x30000, SEEK_SET);
+                if (fread(ram + 0x30000, 1, 0x10000, f) != 0x10000) {}
+                /* Preload Module 4 (Setup Engine) at 0x40000 */
+                fseek(f, 0x40000, SEEK_SET);
+                if (fread(ram + 0x40000, 1, 0x10000, f) != 0x10000) {}
+                /* Preload Module 5 (Configuration Tables) at 0x50000 */
+                fseek(f, 0x50000, SEEK_SET);
+                if (fread(ram + 0x50000, 1, 0x10000, f) != 0x10000) {}
                 /* Preload Module 2 System BIOS into 0xF0000 */
                 fseek(f, 0x20000, SEEK_SET);
                 if (fread(memory_region_get_ram_ptr(shadow_ram_f0000), 1, 0x10000, f) == 0x10000) {
@@ -955,6 +961,8 @@ static void m200_init(MachineState *machine)
     *(uint16_t *)(ram_base + 0x404) = 0x03e8; /* COM3 */
     *(uint16_t *)(ram_base + 0x406) = 0x0338; /* COM4 (Wacom Tablet Digitizer) */
     *(uint16_t *)(ram_base + 0x408) = 0x0378; /* LPT1 */
+    *(uint16_t *)(ram_base + 0x40e) = 0x00c0; /* EBDA Base Segment (0x00C0 -> 0x00000C00) */
+    ram_base[0xc00] = 0x01;                   /* EBDA Size = 1 KB */
     *(uint16_t *)(ram_base + 0x410) = 0x4423; /* Equipment word */
     *(uint16_t *)(ram_base + 0x413) = 640;    /* 640KB Base Memory */
     ram_base[0x449] = 0x03;                   /* Mode 03h (80x25 Color Text) */
