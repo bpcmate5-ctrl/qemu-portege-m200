@@ -412,9 +412,9 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
     /* Setup BAR1 (32MB VRAM Aperture) */
     pci_register_bar(dev, 1, PCI_BASE_ADDRESS_MEM_PREFETCH, &vga->vram);
 
-    /* Subsystem IDs */
-    pci_set_word(dev->config + PCI_SUBSYSTEM_VENDOR_ID, PCI_VENDOR_ID_TOSHIBA);
-    pci_set_word(dev->config + PCI_SUBSYSTEM_ID, 0x0010);
+    /* Enable PCI Command: Memory Space + I/O Space + Bus Master */
+    pci_set_word(dev->config + PCI_COMMAND,
+                 PCI_COMMAND_IO | PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER);
 
     /* Interrupt routing */
     pci_config_set_interrupt_pin(dev->config, 1); /* Pin A */
