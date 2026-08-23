@@ -282,6 +282,7 @@ static uint64_t toshiba_lcd_d800_read(void *opaque, hwaddr addr, unsigned size)
     case 0x08: return 0x0000; /* Transfer Ready */
     case 0x2c: return 0x0000; /* LCD Timing Status Ready */
     case 0x2e: return 0x2000; /* Backlight Inverter ON */
+    case 0x30: return 0x4000; /* Select Bay IDE Power ON */
     case 0x38: return 0x0000; /* Panel Frequency Ready */
     case 0x68: return 0x0800; /* Panel Resolution Ready (1400x1050 SXGA+) */
     default: return 0x0000;
