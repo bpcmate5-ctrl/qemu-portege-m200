@@ -30,6 +30,7 @@
 #include "ui/input.h"
 #include "qemu/module.h"
 #include "vga_font8x16.h"
+#include "toshiba_bios_screens.h"
 #include "qemu/timer.h"
 #include "vga_regs.h"
 
@@ -333,151 +334,30 @@ static void nv34m_reset(DeviceState *dev)
             }
         }
 
-        for (int i = 0; i < 80 * 25; i++) {
-            s->vga.vram_ptr[i * 4 + 0] = ' ';
-            s->vga.vram_ptr[i * 4 + 1] = 0x07;
-        }
+        nv34m_render_screen(s, 0);
     }
 }
 
-static const char *bios_screens[4][25] = {
-    /* Screen 0: NoteBIOS POST Screen */
-    {
-        "================================================================================",
-        "                           TOSHIBA Portege M200                                 ",
-        "                     Tablet PC NoteBIOS (v1.00 EC45)                            ",
-        "================================================================================",
-        " CPU Type       : Intel(R) Pentium(R) M processor 740 @ 1.73GHz                 ",
-        " CPU Speed      : 1.73 GHz (FSB 533 MHz)                                        ",
-        " System Memory  : 512 MB DDR-333 SDRAM (Dual Channel Active)                    ",
-        " Host Chipset   : Intel 82855PM Memory Controller Hub (MCH)                     ",
-        " Southbridge    : Intel 82801DBM (ICH4-M) I/O Controller Hub                    ",
-        " Video Device   : NVIDIA GeForce FX Go5200 (NV34M 32MB DDR VRAM)               ",
-        " Internal Panel : 12.1\" Poly-silicon SXGA+ (1400 x 1050) TFT LCD               ",
-        " Audio Device   : Intel 82801DBM AC'97 Audio Controller                         ",
-        " Digitizer      : Wacom Serial Pen Tablet Digitizer (COM4 / IRQ 4)              ",
-        " IDE Primary    : 60.0 GB ATA/100 Hard Disk Drive                               ",
-        " IDE Secondary  : TOSHIBA DVD-ROM / CD-RW Slimline Drive                        ",
-        "================================================================================",
-        " NoteBIOS POST Status: PASSED (All hardware subsystems OK)                      ",
-        "                                                                                ",
-        " Press <F2> for System Setup, <F12> for Boot Menu, <Enter> to Boot...           ",
-        "================================================================================",
-        "                                                                                ",
-        "                                                                                ",
-        "                                                                                ",
-        "                                                                                ",
-        "================================================================================"
-    },
-    /* Screen 1: SYSTEM SETUP (1/2) */
-    {
-        "================================================================================",
-        "             TOSHIBA Portege M200 - SYSTEM SETUP (1/2) - NoteBIOS               ",
-        "================================================================================",
-        "  MEMORY            : Base 640 KB, Extended 523,264 KB, Total 512 MB            ",
-        "                                                                                ",
-        "  DISPLAY           : Internal LCD Only  [1400x1050 Poly-silicon TFT]           ",
-        "  DISPLAY MODE      : Stretch Mode [Enabled]                                    ",
-        "                                                                                ",
-        "  PASSWORD          : User Password       [Not Registered]                      ",
-        "  HDD PASSWORD      : Hard Disk Security  [Not Registered]                      ",
-        "                                                                                ",
-        "  PERIPHERAL        : Serial Port 1       (COM1 / 0x3F8 / IRQ4)                 ",
-        "  TABLET DIGITIZER  : Wacom Digitizer Pen (COM4 / 0x338 / IRQ4)                 ",
-        "                                                                                ",
-        "  BATTERY SAVER     : High Performance    [S0 Full Power State]                 ",
-        "  POWER MANAGEMENT  : ACPI 2.0 / APM 1.2  [Enabled]                             ",
-        "                                                                                ",
-        "  BOOT PRIORITY     : 1. HDD  2. CD-ROM  3. LAN (PXE)  4. USB FDD               ",
-        "                                                                                ",
-        "================================================================================",
-        " [F2 / PgDn]: Page 2   |   [Space]: Change Value   |   [Esc / Enter]: Exit/Save ",
-        "================================================================================",
-        "                                                                                ",
-        "                                                                                ",
-        "================================================================================"
-    },
-    /* Screen 2: SYSTEM SETUP (2/2) */
-    {
-        "================================================================================",
-        "             TOSHIBA Portege M200 - SYSTEM SETUP (2/2) - NoteBIOS               ",
-        "================================================================================",
-        "  I/O PORTS         : Parallel Port       (LPT1 / 0x378 / ECP+EPP)              ",
-        "                                                                                ",
-        "  PCI BUS           : PCI LAN Intel PRO/100 VE Network     [Enabled]            ",
-        "  SOUND SYSTEM      : Intel 82801DBM AC'97 Audio Codec     [Enabled]            ",
-        "  USB CONTROLLER    : Intel ICH4-M USB 2.0 (EHCI + 3xUHCI) [Enabled]            ",
-        "  LEGACY USB        : USB Keyboard / Mouse Emulation       [Enabled]            ",
-        "                                                                                ",
-        "  PC CARD (CARDBUS) : TI PCI-1510 CardBus Controller       [Enabled]            ",
-        "  SD CONTROLLER     : Toshiba SD Card Host Controller      [Enabled]            ",
-        "                                                                                ",
-        "  SYSTEM DATE       : 08 / 23 / 2026                                            ",
-        "  SYSTEM TIME       : 06 : 28 : 00                                              ",
-        "                                                                                ",
-        "  VIRUS CHECK       : Built-in Boot Sector Protect         [Disabled]           ",
-        "                                                                                ",
-        "================================================================================",
-        " [F2 / PgUp]: Page 1   |   [Space]: Change Value   |   [Esc / Enter]: Exit/Save ",
-        "================================================================================",
-        "                                                                                ",
-        "                                                                                ",
-        "================================================================================"
-    },
-    /* Screen 3: BOOT DEVICE MENU */
-    {
-        "================================================================================",
-        "                     TOSHIBA Portege M200 - BOOT DEVICE MENU                    ",
-        "================================================================================",
-        "                                                                                ",
-        "   Please select boot device:                                                   ",
-        "                                                                                ",
-        "      [ 1 ]  Primary Hard Disk Drive (60.0 GB ATA/100 HDD)                      ",
-        "      [ 2 ]  Secondary CD-ROM / DVD Slimline Drive                              ",
-        "      [ 3 ]  Intel(R) Boot Agent FE (PXE Network Boot)                          ",
-        "      [ 4 ]  USB Flash Memory / Removable Drive                                 ",
-        "                                                                                ",
-        "                                                                                ",
-        "                                                                                ",
-        "                                                                                ",
-        "                                                                                ",
-        "                                                                                ",
-        "                                                                                ",
-        "                                                                                ",
-        "                                                                                ",
-        "================================================================================",
-        " Use [1-4] or [Up/Down] arrows to select, [Enter] to Boot, [Esc] to Return      ",
-        "================================================================================",
-        "                                                                                ",
-        "                                                                                ",
-        "================================================================================"
-    }
-};
-
 static void nv34m_render_screen(NV34MState *s, int mode)
 {
-    if (!s->vga.vram_ptr || mode < 0 || mode > 3) {
+    if (!s->vga.vram_ptr || mode < 0 || mode > 2) {
         return;
     }
     s->bios_screen_mode = mode;
 
-    for (int r = 0; r < 25; r++) {
-        const char *row_str = bios_screens[mode][r];
-        if (!row_str) {
-            continue;
-        }
-        for (int c = 0; c < 80 && row_str[c]; c++) {
-            uint8_t ch = (uint8_t)row_str[c];
-            uint8_t attr = 0x07;
-            if (r < 4 || r >= 19) {
-                attr = 0x1f; /* White on Blue headers/footers */
-            } else if (mode == 0 && r == 16) {
-                attr = 0x0a; /* Bright Green for PASSED */
-            } else if (mode == 3 && r >= 6 && r <= 9) {
-                attr = 0x0f; /* Bright White for menu choices */
-            }
-            s->vga.vram_ptr[(r * 80 + c) * 4 + 0] = ch;
-            s->vga.vram_ptr[(r * 80 + c) * 4 + 1] = attr;
+    const uint8_t *screen_data = NULL;
+    if (mode == 0) {
+        screen_data = toshiba_bios_screen_0;
+    } else if (mode == 1) {
+        screen_data = toshiba_bios_screen_1;
+    } else if (mode == 2) {
+        screen_data = toshiba_bios_screen_2;
+    }
+
+    if (screen_data) {
+        for (int i = 0; i < 80 * 25; i++) {
+            s->vga.vram_ptr[i * 4 + 0] = screen_data[i * 2 + 0];
+            s->vga.vram_ptr[i * 4 + 1] = screen_data[i * 2 + 1];
         }
     }
     s->vga.full_update_text = 1;
