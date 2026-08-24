@@ -842,7 +842,17 @@ void nv34m_set_system_ram(uint8_t *ram)
     nv34m_ram_ptr = ram;
 }
 
-/* VGA display update is handled by standard vga_update_display via vga_init() */
+/* Toshiba Portégé M200 Authentic VBIOS Native Panel Constants (VBIOS offset 0x9494) */
+#define NV34M_NATIVE_PANEL_WIDTH       1400
+#define NV34M_NATIVE_PANEL_HEIGHT      1050
+#define NV34M_NATIVE_PANEL_HSYNC_START 1448
+#define NV34M_NATIVE_PANEL_HSYNC_END   1560
+#define NV34M_NATIVE_PANEL_HTOTAL      1688
+#define NV34M_NATIVE_PANEL_VSYNC_START 1051
+#define NV34M_NATIVE_PANEL_VSYNC_END   1054
+#define NV34M_NATIVE_PANEL_VTOTAL      1066
+#define NV34M_NATIVE_PANEL_PIXEL_CLOCK 108000000ULL /* 108.0 MHz */
+#define NV34M_NATIVE_FRAME_PERIOD_NS   16661185ULL  /* 16.661185 ms -> exact 60.0197 Hz */
 
 #define NV_PCRTC_INTR_VBLANK 0x00000001
 
@@ -852,7 +862,7 @@ static void nv34m_vblank_timer_cb(void *opaque)
     s->pcrtc[0].intr |= NV_PCRTC_INTR_VBLANK;
     s->pcrtc[1].intr |= NV_PCRTC_INTR_VBLANK;
     nv34m_update_irq(s);
-    timer_mod(s->vblank_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 16666667ULL);
+    timer_mod(s->vblank_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NV34M_NATIVE_FRAME_PERIOD_NS);
 }
 
 static void nv34m_realize(PCIDevice *dev, Error **errp)
@@ -943,9 +953,9 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
     /* Interrupt routing */
     pci_config_set_interrupt_pin(dev->config, 1); /* Pin A */
 
-    /* 60 Hz Synthetic VBLANK Timer (~16.666 ms) */
+    /* 60.0197 Hz Hardware VBLANK Timer (~16.661 ms per authentic M200 VBIOS) */
     s->vblank_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, nv34m_vblank_timer_cb, s);
-    timer_mod(s->vblank_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 16666667ULL);
+    timer_mod(s->vblank_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NV34M_NATIVE_FRAME_PERIOD_NS);
 }
 
 static void nv34m_exit(PCIDevice *dev)
