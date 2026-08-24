@@ -197,6 +197,28 @@ struct NV34MState {
 
 static NV34MState *global_nv34m_state = NULL;
 
+#define NV_PMC_INTR_PCRTC0        (1u << 24)
+#define NV_PMC_INTR_PCRTC1        (1u << 25)
+#define NV_PMC_INTR_EN_0_HARDWARE (1u << 0)
+#define NV_PMC_INTR_EN_0_SOFTWARE (1u << 1)
+
+static void nv34m_update_irq(NV34MState *s)
+{
+    uint32_t hw_intr = 0;
+
+    if (s->pcrtc[0].intr & s->pcrtc[0].intr_en) {
+        hw_intr |= NV_PMC_INTR_PCRTC0;
+    }
+    if (s->pcrtc[1].intr & s->pcrtc[1].intr_en) {
+        hw_intr |= NV_PMC_INTR_PCRTC1;
+    }
+
+    s->pmc_intr_0 = (s->pmc_intr_0 & 0x80000000u) | hw_intr;
+
+    bool irq_level = (s->pmc_intr_en_0 & NV_PMC_INTR_EN_0_HARDWARE) && (hw_intr != 0);
+    pci_set_irq(&s->dev, irq_level ? 1 : 0);
+}
+
 static inline uint32_t nv34m_get_cpu_eip(void)
 {
     return pc_m200_get_cpu_eip();
@@ -407,10 +429,12 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
         /* Read-only chip ID */
         break;
     case NV_PMC_INTR_0:
-        s->pmc_intr_0 &= ~((uint32_t)val); /* W1C */
+        s->pmc_intr_0 &= ~((uint32_t)val & 0x80000000u); /* bit 31 software interrupt is W1C */
+        nv34m_update_irq(s);
         break;
     case NV_PMC_INTR_EN_0:
         s->pmc_intr_en_0 = val;
+        nv34m_update_irq(s);
         break;
     case NV_PMC_ENABLE:
         s->pmc_enable = val;
@@ -484,9 +508,15 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
     case 0x600000 ... 0x600fff: {
         uint32_t off = addr - 0x600000;
         uint32_t idx = off >> 2;
-        if (off == 0x100) s->pcrtc[0].intr &= ~((uint32_t)val);
-        else if (off == 0x140) s->pcrtc[0].intr_en = val;
-        else if (idx < ARRAY_SIZE(s->pcrtc[0].regs)) s->pcrtc[0].regs[idx] = val;
+        if (off == 0x100) {
+            s->pcrtc[0].intr &= ~((uint32_t)val);
+            nv34m_update_irq(s);
+        } else if (off == 0x140) {
+            s->pcrtc[0].intr_en = val;
+            nv34m_update_irq(s);
+        } else if (idx < ARRAY_SIZE(s->pcrtc[0].regs)) {
+            s->pcrtc[0].regs[idx] = val;
+        }
         fprintf(stderr, "[NV34M PCRTC0 W] offset=0x%04x = 0x%08"PRIx64" (eip=0x%08x)\n", off, val, eip);
         break;
     }
@@ -503,9 +533,15 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
     case 0x602000 ... 0x602fff: {
         uint32_t off = addr - 0x602000;
         uint32_t idx = off >> 2;
-        if (off == 0x100) s->pcrtc[1].intr &= ~((uint32_t)val);
-        else if (off == 0x140) s->pcrtc[1].intr_en = val;
-        else if (idx < ARRAY_SIZE(s->pcrtc[1].regs)) s->pcrtc[1].regs[idx] = val;
+        if (off == 0x100) {
+            s->pcrtc[1].intr &= ~((uint32_t)val);
+            nv34m_update_irq(s);
+        } else if (off == 0x140) {
+            s->pcrtc[1].intr_en = val;
+            nv34m_update_irq(s);
+        } else if (idx < ARRAY_SIZE(s->pcrtc[1].regs)) {
+            s->pcrtc[1].regs[idx] = val;
+        }
         fprintf(stderr, "[NV34M PCRTC1 W] offset=0x%04x = 0x%08"PRIx64" (eip=0x%08x)\n", off, val, eip);
         break;
     }
@@ -615,6 +651,7 @@ static void nv34m_reset(DeviceState *dev)
 
     memset(&s->pcrtc, 0, sizeof(s->pcrtc));
     memset(&s->pramdac, 0, sizeof(s->pramdac));
+    nv34m_update_irq(s);
 
     /* Initialize PFB (Memory Controller - 32MB DDR1) */
     s->pfb.cfg0 = 0x00000000;
@@ -733,6 +770,7 @@ static void nv34m_vblank_timer_cb(void *opaque)
     NV34MState *s = opaque;
     s->pcrtc[0].intr |= NV_PCRTC_INTR_VBLANK;
     s->pcrtc[1].intr |= NV_PCRTC_INTR_VBLANK;
+    nv34m_update_irq(s);
     timer_mod(s->vblank_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 16666667ULL);
 }
 
