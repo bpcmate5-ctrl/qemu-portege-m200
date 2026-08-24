@@ -47,6 +47,7 @@
 #define NV_PMC_BOOT_1             0x000004
 #define NV_PMC_INTR_0             0x000100
 #define NV_PMC_INTR_EN_0          0x000140
+#define NV_PMC_INTR_LINE_HOST     0x000160
 #define NV_PMC_ENABLE             0x000200
 
 /* PBUS (PCI / Bus Interface) 0x001000..0x001FFF */
@@ -169,6 +170,8 @@ struct NV34MState {
     uint32_t pmc_intr_0;
     uint32_t pmc_intr_en_0;
     uint32_t pmc_enable;
+    bool pmc_sw_intr;
+    bool irq_level;
 
     /* PTIMER Registers */
     uint32_t ptimer_numerator;
@@ -213,10 +216,26 @@ static void nv34m_update_irq(NV34MState *s)
         hw_intr |= NV_PMC_INTR_PCRTC1;
     }
 
-    s->pmc_intr_0 = (s->pmc_intr_0 & 0x80000000u) | hw_intr;
+    s->pmc_intr_0 = (s->pmc_sw_intr ? 0x80000000u : 0) | hw_intr;
 
-    bool irq_level = (s->pmc_intr_en_0 & NV_PMC_INTR_EN_0_HARDWARE) && (hw_intr != 0);
-    pci_set_irq(&s->dev, irq_level ? 1 : 0);
+    bool hw_irq = (s->pmc_intr_en_0 & NV_PMC_INTR_EN_0_HARDWARE) && (hw_intr != 0);
+    bool sw_irq = (s->pmc_intr_en_0 & NV_PMC_INTR_EN_0_SOFTWARE) && s->pmc_sw_intr;
+    s->irq_level = hw_irq || sw_irq;
+
+    pci_set_irq(&s->dev, s->irq_level ? 1 : 0);
+}
+
+static void nv34m_decode_pll(const char *name, uint32_t val)
+{
+    uint32_t m = val & 0xFF;
+    uint32_t n = (val >> 8) & 0xFF;
+    uint32_t p = (val >> 16) & 0x07;
+    if (m > 0) {
+        /* NV34 Reference Clock is 27.0 MHz (27000 kHz) */
+        double f_out = (27.0 * n) / (m * (1 << p));
+        fprintf(stderr, "[NV34M PLL DECODE] %s: M=%u, N=%u, P=%u (raw=0x%08x) -> F_OUT=%.3f MHz\n",
+                name, m, n, p, val, f_out);
+    }
 }
 
 static inline uint32_t nv34m_get_cpu_eip(void)
@@ -232,11 +251,12 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
 
     switch (addr) {
     /* PMC (0x000000..0x000FFF) */
-    case NV_PMC_BOOT_0:   val = s->pmc_boot_0; break;
-    case NV_PMC_BOOT_1:   val = s->pmc_boot_1; break;
-    case NV_PMC_INTR_0:   val = s->pmc_intr_0; break;
-    case NV_PMC_INTR_EN_0:val = s->pmc_intr_en_0; break;
-    case NV_PMC_ENABLE:   val = s->pmc_enable; break;
+    case NV_PMC_BOOT_0:        val = s->pmc_boot_0; break;
+    case NV_PMC_BOOT_1:        val = s->pmc_boot_1; break;
+    case NV_PMC_INTR_0:        val = s->pmc_intr_0; break;
+    case NV_PMC_INTR_EN_0:     val = s->pmc_intr_en_0; break;
+    case NV_PMC_INTR_LINE_HOST:val = s->irq_level ? 0 : 1; break;
+    case NV_PMC_ENABLE:        val = s->pmc_enable; break;
 
     /* PTIMER (0x009000..0x009FFF) */
     case NV_PTIMER_TIME_0:
@@ -559,6 +579,10 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
         uint32_t off = addr - 0x680000;
         uint32_t idx = off >> 2;
         if (idx < ARRAY_SIZE(s->pramdac[0].regs)) s->pramdac[0].regs[idx] = val;
+        if (off == 0x500) nv34m_decode_pll("Head0 NVPLL (Core)", val);
+        else if (off == 0x504) nv34m_decode_pll("Head0 MPLL (Memory)", val);
+        else if (off == 0x508) nv34m_decode_pll("Head0 VPLL (Pixel Clock)", val);
+        else if (off == 0x520) nv34m_decode_pll("Head0 VPLL2", val);
         const char *sub = (off >= 0x300 && off <= 0x33f) ? "CURSOR" :
                           (off >= 0x500 && off <= 0x5ff) ? "PLL" :
                           (off >= 0x600 && off <= 0x7ff) ? "GENERAL" :
@@ -581,6 +605,10 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
         uint32_t off = addr - 0x682000;
         uint32_t idx = off >> 2;
         if (idx < ARRAY_SIZE(s->pramdac[1].regs)) s->pramdac[1].regs[idx] = val;
+        if (off == 0x500) nv34m_decode_pll("Head1 NVPLL (Core)", val);
+        else if (off == 0x504) nv34m_decode_pll("Head1 MPLL (Memory)", val);
+        else if (off == 0x508) nv34m_decode_pll("Head1 VPLL (Pixel Clock)", val);
+        else if (off == 0x520) nv34m_decode_pll("Head1 VPLL2", val);
         const char *sub = (off >= 0x300 && off <= 0x33f) ? "CURSOR" :
                           (off >= 0x500 && off <= 0x5ff) ? "PLL" :
                           (off >= 0x600 && off <= 0x7ff) ? "GENERAL" :
