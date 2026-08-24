@@ -217,11 +217,21 @@ struct NV34MState {
     bool display_timing_valid;
     bool display_timing_dynamic;
 
+    /* Visual Self-Test & Native NV34 Scanout Bridge State */
+    bool visual_selftest;         /* Property: Legacy VGA text visual self-test */
+    bool native_scanout_test;     /* Property: Native 1400x1050 linear FB visual self-test */
+    bool native_scanout_active;   /* Runtime scanout mode: true = native linear FB, false = legacy VGA */
+    uint32_t native_fb_offset;    /* Framebuffer VRAM start offset */
+    uint32_t live_test_frame;     /* Frame counter for live update testing */
+
     const GraphicHwOps *default_hw_ops;
     uint8_t *ramin_buf;
 };
 
 static NV34MState *global_nv34m_state = NULL;
+
+static void nv34m_render_vga_test_pattern(NV34MState *s);
+static void nv34m_render_native_test_pattern(NV34MState *s, int phase);
 
 #define NV_PMC_INTR_PCRTC0        (1u << 24)
 #define NV_PMC_INTR_PCRTC1        (1u << 25)
@@ -816,8 +826,8 @@ static void nv34m_reset(DeviceState *dev)
     /* Initialize VRAM Text Buffer (Planes 0 & 1) and Font (Plane 2) */
     if (s->vga.vram_ptr) {
         for (int k = 0; k < 80 * 25; k++) {
-            s->vga.vram_ptr[k * 2 + 0] = ' ';
-            s->vga.vram_ptr[k * 2 + 1] = 0x07;
+            s->vga.vram_ptr[k * 4 + 0] = ' ';
+            s->vga.vram_ptr[k * 4 + 1] = 0x07;
         }
         for (int c = 0; c < 256; c++) {
             for (int row = 0; row < 16; row++) {
@@ -825,13 +835,20 @@ static void nv34m_reset(DeviceState *dev)
             }
         }
     }
+
+    if (s->visual_selftest) {
+        nv34m_render_vga_test_pattern(s);
+    }
+    if (s->native_scanout_test) {
+        nv34m_render_native_test_pattern(s, 0);
+    }
 }
 
 void nv34m_vga_write_text(int row, int col, uint8_t ch, uint8_t attr)
 {
     if (!global_nv34m_state || !global_nv34m_state->vga.vram_ptr) return;
     if (row < 0 || row >= 25 || col < 0 || col >= 80) return;
-    int idx = (row * 80 + col) * 2;
+    int idx = (row * 80 + col) * 4;
     global_nv34m_state->vga.vram_ptr[idx + 0] = ch;
     global_nv34m_state->vga.vram_ptr[idx + 1] = attr;
     global_nv34m_state->vga.full_update_text = true;
@@ -846,6 +863,142 @@ void nv34m_vga_clear_screen(uint8_t attr)
         }
     }
 }
+
+static void nv34m_render_vga_test_pattern(NV34MState *s)
+{
+    VGACommonState *vga = &s->vga;
+    if (!vga->vram_ptr) return;
+
+    /* Fill background with dark blue attribute (0x17) */
+    for (int r = 0; r < 25; r++) {
+        for (int c = 0; c < 80; c++) {
+            nv34m_vga_write_text(r, c, ' ', 0x17);
+        }
+    }
+
+    static const struct {
+        int row;
+        int col;
+        const char *text;
+        uint8_t attr;
+    } test_lines[] = {
+        {2,  0, "================================================================================", 0x1F},
+        {4, 28, "NV34M VGA VISUAL TEST", 0x1E},
+        {6, 33, "PORTEGE M200", 0x1F},
+        {8, 29, "LEGACY VGA OUTPUT: OK", 0x2F},
+        {10, 24, "1400x1050 NATIVE PANEL DISPLAY", 0x1B},
+        {12, 29, "60.0197 Hz (16.661 ms)", 0x1A},
+        {14, 0, "================================================================================", 0x1F},
+    };
+
+    for (size_t i = 0; i < G_N_ELEMENTS(test_lines); i++) {
+        const char *p = test_lines[i].text;
+        int col = test_lines[i].col;
+        while (*p && col < 80) {
+            nv34m_vga_write_text(test_lines[i].row, col++, *p++, test_lines[i].attr);
+        }
+    }
+}
+
+static void nv34m_render_native_test_pattern(NV34MState *s, int phase)
+{
+    VGACommonState *vga = &s->vga;
+    if (!vga->vram_ptr) return;
+
+    uint32_t width = s->active_hdisplay ? s->active_hdisplay : NV34M_NATIVE_PANEL_WIDTH;
+    uint32_t height = s->active_vdisplay ? s->active_vdisplay : NV34M_NATIVE_PANEL_HEIGHT;
+    uint32_t *fb = (uint32_t *)(vga->vram_ptr + s->native_fb_offset);
+
+    static const uint32_t rgb_bars[3][3] = {
+        {0x00FF0000, 0x0000FF00, 0x000000FF}, /* Frame A: RED | GREEN | BLUE */
+        {0x000000FF, 0x00FF0000, 0x0000FF00}, /* Frame B: BLUE | RED | GREEN */
+        {0x0000FF00, 0x000000FF, 0x00FF0000}, /* Frame C: GREEN | BLUE | RED */
+    };
+    const uint32_t *current_bars = rgb_bars[phase % 3];
+
+    static const uint32_t smpte_colors[8] = {
+        0x00FFFFFF, /* White */
+        0x00FFFF00, /* Yellow */
+        0x0000FFFF, /* Cyan */
+        0x0000FF00, /* Green */
+        0x00FF00FF, /* Magenta */
+        0x00FF0000, /* Red */
+        0x000000FF, /* Blue */
+        0x00000000, /* Black */
+    };
+
+    for (uint32_t y = 0; y < height; y++) {
+        for (uint32_t x = 0; x < width; x++) {
+            uint32_t color = 0;
+            if (y < 350) {
+                /* Top third: 3 Primary RGB Bars (cycles in phase A/B/C for live update validation) */
+                int bar_idx = (x * 3) / width;
+                color = current_bars[bar_idx < 3 ? bar_idx : 2];
+            } else if (y < 700) {
+                /* Middle third: SMPTE Color Bars with Checkerboard overlay */
+                if ((x < 32 || x >= (width - 32)) || ((x / 32 + y / 32) & 1)) {
+                    int bar_idx = (x * 8) / width;
+                    color = smpte_colors[bar_idx < 8 ? bar_idx : 7];
+                } else {
+                    color = ((x / 32 + y / 32) & 1) ? 0x00333333 : 0x00CCCCCC;
+                }
+            } else {
+                /* Bottom third: Smooth horizontal/vertical gradient */
+                uint32_t grad_r = (x * 255) / width;
+                uint32_t grad_g = ((height - y) * 255) / 350;
+                uint32_t grad_b = ((x + y) * 128) / (width + height);
+                color = (grad_r << 16) | (grad_g << 8) | grad_b;
+            }
+            fb[y * width + x] = color;
+        }
+    }
+}
+
+static void nv34m_gfx_update(void *opaque)
+{
+    NV34MState *s = opaque;
+    VGACommonState *vga = &s->vga;
+
+    if (s->native_scanout_active || s->native_scanout_test) {
+        uint32_t width = s->active_hdisplay ? s->active_hdisplay : NV34M_NATIVE_PANEL_WIDTH;
+        uint32_t height = s->active_vdisplay ? s->active_vdisplay : NV34M_NATIVE_PANEL_HEIGHT;
+        uint32_t pitch = width * 4;
+        uint32_t offset = s->native_fb_offset;
+        DisplaySurface *surface = qemu_console_surface(vga->con);
+
+        if (!surface || surface_width(surface) != width || surface_height(surface) != height ||
+            surface_data(surface) != (vga->vram_ptr + offset)) {
+            surface = qemu_create_displaysurface_from(width, height,
+                                                      PIXMAN_x8r8g8b8,
+                                                      pitch,
+                                                      vga->vram_ptr + offset);
+            dpy_gfx_replace_surface(vga->con, surface);
+            dpy_gfx_update_full(vga->con);
+        } else {
+            dpy_gfx_update(vga->con, 0, 0, width, height);
+        }
+    } else {
+        /* Standard Legacy VGA Pipeline */
+        if (s->default_hw_ops && s->default_hw_ops->gfx_update) {
+            s->default_hw_ops->gfx_update(vga);
+        }
+    }
+}
+
+static void nv34m_gfx_invalidate(void *opaque)
+{
+    NV34MState *s = opaque;
+    VGACommonState *vga = &s->vga;
+    if (!s->native_scanout_active && !s->native_scanout_test &&
+        s->default_hw_ops && s->default_hw_ops->invalidate) {
+        s->default_hw_ops->invalidate(vga);
+    }
+}
+
+static const GraphicHwOps nv34m_graphic_ops = {
+    .gfx_update = nv34m_gfx_update,
+    .invalidate = nv34m_gfx_invalidate,
+};
 
 void nv34m_vga_set_mode(int width, int height, int bpp)
 {
@@ -876,8 +1029,6 @@ void nv34m_set_system_ram(uint8_t *ram)
     nv34m_ram_ptr = ram;
 }
 
-
-
 #define NV_PCRTC_INTR_VBLANK 0x00000001
 
 static void nv34m_vblank_timer_cb(void *opaque)
@@ -886,6 +1037,19 @@ static void nv34m_vblank_timer_cb(void *opaque)
     s->pcrtc[0].intr |= NV_PCRTC_INTR_VBLANK;
     s->pcrtc[1].intr |= NV_PCRTC_INTR_VBLANK;
     nv34m_update_irq(s);
+
+    /* If live update test is active, cycle pattern every 60 frames (~1 sec) */
+    if (s->native_scanout_test) {
+        s->live_test_frame++;
+        if ((s->live_test_frame % 60) == 0) {
+            nv34m_render_native_test_pattern(s, s->live_test_frame / 60);
+            if (s->vga.con) {
+                dpy_gfx_update(s->vga.con, 0, 0,
+                               s->active_hdisplay ? s->active_hdisplay : NV34M_NATIVE_PANEL_WIDTH,
+                               s->active_vdisplay ? s->active_vdisplay : NV34M_NATIVE_PANEL_HEIGHT);
+            }
+        }
+    }
 
     if (s->frame_period_ns == 0) {
         s->frame_period_ns = NV34M_NATIVE_FRAME_PERIOD_NS;
@@ -914,7 +1078,7 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
 
     vga_init(vga, OBJECT(dev), pci_address_space(dev), pci_address_space_io(dev), true);
 
-    vga->con = graphic_console_init(DEVICE(dev), 0, s->default_hw_ops, vga);
+    vga->con = graphic_console_init(DEVICE(dev), 0, &nv34m_graphic_ops, s);
 
     /* Initialize Display Timing State (1400x1050 @ 60.0197 Hz Native Panel) */
     s->frame_period_ns = NV34M_NATIVE_FRAME_PERIOD_NS;
@@ -1039,6 +1203,11 @@ static const VMStateDescription vmstate_nv34m = {
     }
 };
 
+static const Property nv34m_properties[] = {
+    DEFINE_PROP_BOOL("visual-selftest", NV34MState, visual_selftest, false),
+    DEFINE_PROP_BOOL("native-scanout-test", NV34MState, native_scanout_test, false),
+};
+
 static void nv34m_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -1052,6 +1221,7 @@ static void nv34m_class_init(ObjectClass *klass, const void *data)
     k->revision = 0xa1;
     k->class_id = PCI_CLASS_DISPLAY_VGA;
     dc->vmsd = &vmstate_nv34m;
+    device_class_set_props(dc, nv34m_properties);
     device_class_set_legacy_reset(dc, nv34m_reset);
     set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
     dc->desc = "NVIDIA GeForce FX Go5200 (NV34M)";
