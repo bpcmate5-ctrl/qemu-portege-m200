@@ -76,16 +76,57 @@
 /* PSTRAPS (Hardware Straps) 0x101000 */
 #define NV_PSTRAPS                0x101000
 
-/* PCRTC / PVIO (VGA Shadow Registers) 0x601000..0x603FFF */
-#define NV_PRMCIO_INP0__COLOR     0x6013da
+/* PCRTC0 (Primary CRTC Controller) 0x600000..0x600FFF */
+#define NV_PCRTC0_INTR            0x600100
+#define NV_PCRTC0_INTR_EN         0x600140
 
-/* PRAMDAC / PDISPLAY (Display Head 0/1, Flat Panel, PLLs) 0x680000..0x680FFF */
-#define NV_PRAMDAC_GENERAL        0x680500
-#define NV_PRAMDAC_VPLL           0x680508
-#define NV_PRAMDAC_MPLL           0x68050c
-#define NV_PRAMDAC_GENERAL_CONTROL 0x680600
-#define NV_PRAMDAC_FP_TG_CONTROL  0x680800
-#define NV_PRAMDAC_FP_DEBUG_0     0x680880
+/* PRMCIO0 (Primary VGA CRTC/Attr IO Shadow) 0x601000..0x601FFF */
+#define NV_PRMCIO0_BASE           0x601000
+#define NV_PRMCIO0_INP0__COLOR    0x6013da
+
+/* PCRTC1 (Secondary CRTC Controller) 0x602000..0x602FFF */
+#define NV_PCRTC1_INTR            0x602100
+#define NV_PCRTC1_INTR_EN         0x602140
+
+/* PRMCIO1 (Secondary VGA CRTC/Attr IO Shadow) 0x603000..0x603FFF */
+#define NV_PRMCIO1_BASE           0x603000
+#define NV_PRMCIO1_INP0__COLOR    0x6033da
+
+/* PRAMDAC0 (Primary Display Output Engine) 0x680000..0x680FFF */
+#define NV_PRAMDAC0_CURSOR_POS    0x680300
+#define NV_PRAMDAC0_NVPLL         0x680500
+#define NV_PRAMDAC0_MPLL          0x680504
+#define NV_PRAMDAC0_VPLL          0x680508
+#define NV_PRAMDAC0_PLL_CTRL      0x68050c
+#define NV_PRAMDAC0_PLL_SETUP     0x680510
+#define NV_PRAMDAC0_VPLL2         0x680520
+#define NV_PRAMDAC0_SEL_CLK       0x680524
+#define NV_PRAMDAC0_NVPLL_S2      0x680570
+#define NV_PRAMDAC0_MPLL_S2       0x680574
+#define NV_PRAMDAC0_VPLL_S2       0x680578
+#define NV_PRAMDAC0_VPLL2_S2      0x68057c
+#define NV_PRAMDAC0_GENERAL_CTRL  0x680600
+#define NV_PRAMDAC0_FP_VDISP_END  0x680800
+#define NV_PRAMDAC0_FP_VTOTAL     0x680804
+#define NV_PRAMDAC0_FP_VCRTC      0x680808
+#define NV_PRAMDAC0_FP_VSYNC_S    0x68080c
+#define NV_PRAMDAC0_FP_VSYNC_E    0x680810
+#define NV_PRAMDAC0_FP_HDISP_END  0x680820
+#define NV_PRAMDAC0_FP_HTOTAL     0x680824
+#define NV_PRAMDAC0_FP_HCRTC      0x680828
+#define NV_PRAMDAC0_FP_HSYNC_S    0x68082c
+#define NV_PRAMDAC0_FP_HSYNC_E    0x680830
+#define NV_PRAMDAC0_FP_TG_CTRL    0x680848
+#define NV_PRAMDAC0_FP_DEBUG_0    0x680880
+#define NV_PRAMDAC0_FP_TMDS_CTRL  0x6808b0
+#define NV_PRAMDAC0_FP_TMDS_DATA  0x6808b4
+
+/* PRMDIO0 (Primary VGA DAC IO Shadow) 0x681000..0x681FFF */
+
+/* PRAMDAC1 (Secondary Display Output Engine) 0x682000..0x682FFF */
+#define NV_PRAMDAC1_BASE          0x682000
+
+/* PRMDIO1 (Secondary VGA DAC IO Shadow) 0x683000..0x683FFF */
 
 OBJECT_DECLARE_SIMPLE_TYPE(NV34MState, NV34M_VGA)
 
@@ -101,6 +142,28 @@ typedef struct NVPFBState {
     uint32_t ram_cfg;
     uint32_t wbc;
 } NVPFBState;
+
+typedef struct NVPCRTCState {
+    uint32_t intr;
+    uint32_t intr_en;
+    uint32_t regs[256];
+} NVPCRTCState;
+
+typedef struct NVPRAMDACState {
+    uint32_t nvpll;
+    uint32_t mpll;
+    uint32_t vpll;
+    uint32_t vpll2;
+    uint32_t pll_ctrl;
+    uint32_t pll_setup;
+    uint32_t sel_clk;
+    uint32_t nvpll_s2;
+    uint32_t mpll_s2;
+    uint32_t vpll_s2;
+    uint32_t vpll2_s2;
+    uint32_t general_ctrl;
+    uint32_t regs[1024];
+} NVPRAMDACState;
 
 struct NV34MState {
     PCIDevice dev;
@@ -128,13 +191,13 @@ struct NV34MState {
     /* PFB (Memory Controller) */
     NVPFBState pfb;
 
-    /* PRAMDAC / Display Registers */
-    uint32_t pramdac_general;
-    uint32_t pramdac_vpll;
-    uint32_t pramdac_mpll;
-    uint32_t head_regs[1024];
-    const GraphicHwOps *default_hw_ops;
+    /* PCRTC0 & PCRTC1 */
+    NVPCRTCState pcrtc[2];
 
+    /* PRAMDAC0 & PRAMDAC1 */
+    NVPRAMDACState pramdac[2];
+
+    const GraphicHwOps *default_hw_ops;
     uint8_t *ramin_buf;
 };
 
@@ -235,31 +298,81 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
         fprintf(stderr, "[NV34M PSTRAPS R] (0x101000) -> 0x%08x (eip=0x%08x)\n", val, eip);
         break;
 
-    /* Legacy VGA CRTC / Sequencer / GC shadow */
-    case 0x6013c0 ... 0x6013da:
-    case 0x6033c0 ... 0x6033da: {
-        uint32_t port = 0x3c0 + (addr & 0x1f);
-        val = vga_ioport_read(&s->vga, port);
+    /* PCRTC0 (0x600000..0x600FFF) */
+    case 0x600000 ... 0x600fff: {
+        uint32_t off = addr - 0x600000;
+        if (off == 0x100) val = s->pcrtc[0].intr;
+        else if (off == 0x140) val = s->pcrtc[0].intr_en;
+        else if ((off >> 2) < 256) val = s->pcrtc[0].regs[off >> 2];
+        fprintf(stderr, "[NV34M PCRTC0 R] offset=0x%04x -> 0x%08x (eip=0x%08x)\n", off, val, eip);
         break;
     }
 
-    /* Display Head & Flat Panel MMIO (0x680000..0x680FFF) */
+    /* PRMCIO0 (0x601000..0x601FFF: VGA CRTC / Sequencer / GC IO shadow) */
+    case 0x601000 ... 0x601fff: {
+        uint32_t port = 0x3c0 + (addr & 0x1f);
+        val = vga_ioport_read(&s->vga, port);
+        fprintf(stderr, "[NV34M PRMCIO0 R] port=0x%03x -> 0x%08x (eip=0x%08x)\n", port, val, eip);
+        break;
+    }
+
+    /* PCRTC1 (0x602000..0x602FFF) */
+    case 0x602000 ... 0x602fff: {
+        uint32_t off = addr - 0x602000;
+        if (off == 0x100) val = s->pcrtc[1].intr;
+        else if (off == 0x140) val = s->pcrtc[1].intr_en;
+        else if ((off >> 2) < 256) val = s->pcrtc[1].regs[off >> 2];
+        fprintf(stderr, "[NV34M PCRTC1 R] offset=0x%04x -> 0x%08x (eip=0x%08x)\n", off, val, eip);
+        break;
+    }
+
+    /* PRMCIO1 (0x603000..0x603FFF: Secondary VGA IO shadow) */
+    case 0x603000 ... 0x603fff: {
+        uint32_t port = 0x3c0 + (addr & 0x1f);
+        val = vga_ioport_read(&s->vga, port);
+        fprintf(stderr, "[NV34M PRMCIO1 R] port=0x%03x -> 0x%08x (eip=0x%08x)\n", port, val, eip);
+        break;
+    }
+
+    /* PRAMDAC0 (0x680000..0x680FFF: Primary Display Output Engine) */
     case 0x680000 ... 0x680fff: {
-        if (addr >= 0x6803c6 && addr <= 0x6803c9) {
-            uint32_t port = 0x3c6 + (addr - 0x6803c6);
-            val = vga_ioport_read(&s->vga, port);
-        } else {
-            uint32_t idx = (addr - 0x680000) >> 2;
-            if (idx < 1024) {
-                val = s->head_regs[idx];
-                const char *sub = (addr < 0x680400) ? "HEAD0" :
-                                  (addr < 0x680500) ? "RAMDAC" :
-                                  (addr < 0x680600) ? "PLL" :
-                                  (addr < 0x680800) ? "GENERAL" : "FP_LVDS";
-                fprintf(stderr, "[NV34M DISPLAY R] %s (0x%06"HWADDR_PRIx") -> 0x%08x (eip=0x%08x)\n",
-                        sub, addr, val, eip);
-            }
-        }
+        uint32_t off = addr - 0x680000;
+        uint32_t idx = off >> 2;
+        if (idx < 1024) val = s->pramdac[0].regs[idx];
+        const char *sub = (off < 0x400) ? "CURSOR" :
+                          (off < 0x600) ? "PLL" :
+                          (off < 0x800) ? "GENERAL" : "FP";
+        fprintf(stderr, "[NV34M PRAMDAC0 R] %s (0x%06"HWADDR_PRIx") -> 0x%08x (eip=0x%08x)\n",
+                sub, addr, val, eip);
+        break;
+    }
+
+    /* PRMDIO0 (0x681000..0x681FFF: Primary VGA DAC IO shadow) */
+    case 0x681000 ... 0x681fff: {
+        uint32_t port = 0x3c0 + (addr & 0x1f);
+        val = vga_ioport_read(&s->vga, port);
+        fprintf(stderr, "[NV34M PRMDIO0 R] port=0x%03x -> 0x%08x (eip=0x%08x)\n", port, val, eip);
+        break;
+    }
+
+    /* PRAMDAC1 (0x682000..0x682FFF: Secondary Display Output Engine) */
+    case 0x682000 ... 0x682fff: {
+        uint32_t off = addr - 0x682000;
+        uint32_t idx = off >> 2;
+        if (idx < 1024) val = s->pramdac[1].regs[idx];
+        const char *sub = (off < 0x400) ? "CURSOR" :
+                          (off < 0x600) ? "PLL" :
+                          (off < 0x800) ? "GENERAL" : "FP";
+        fprintf(stderr, "[NV34M PRAMDAC1 R] %s (0x%06"HWADDR_PRIx") -> 0x%08x (eip=0x%08x)\n",
+                sub, addr, val, eip);
+        break;
+    }
+
+    /* PRMDIO1 (0x683000..0x683FFF: Secondary VGA DAC IO shadow) */
+    case 0x683000 ... 0x683fff: {
+        uint32_t port = 0x3c0 + (addr & 0x1f);
+        val = vga_ioport_read(&s->vga, port);
+        fprintf(stderr, "[NV34M PRMDIO1 R] port=0x%03x -> 0x%08x (eip=0x%08x)\n", port, val, eip);
         break;
     }
 
@@ -369,31 +482,81 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
         fprintf(stderr, "[NV34M PSTRAPS W] (0x101000) = 0x%08"PRIx64" (eip=0x%08x)\n", val, eip);
         break;
 
-    /* Legacy VGA CRTC / Sequencer / GC shadow */
-    case 0x6013c0 ... 0x6013da:
-    case 0x6033c0 ... 0x6033da: {
-        uint32_t port = 0x3c0 + (addr & 0x1f);
-        vga_ioport_write(&s->vga, port, val);
+    /* PCRTC0 (0x600000..0x600FFF) */
+    case 0x600000 ... 0x600fff: {
+        uint32_t off = addr - 0x600000;
+        if (off == 0x100) s->pcrtc[0].intr &= ~((uint32_t)val);
+        else if (off == 0x140) s->pcrtc[0].intr_en = val;
+        else if ((off >> 2) < 256) s->pcrtc[0].regs[off >> 2] = val;
+        fprintf(stderr, "[NV34M PCRTC0 W] offset=0x%04x = 0x%08"PRIx64" (eip=0x%08x)\n", off, val, eip);
         break;
     }
 
-    /* Display Head & Flat Panel MMIO (0x680000..0x680FFF) */
+    /* PRMCIO0 (0x601000..0x601FFF: VGA CRTC / Sequencer / GC shadow) */
+    case 0x601000 ... 0x601fff: {
+        uint32_t port = 0x3c0 + (addr & 0x1f);
+        vga_ioport_write(&s->vga, port, val);
+        fprintf(stderr, "[NV34M PRMCIO0 W] port=0x%03x = 0x%08"PRIx64" (eip=0x%08x)\n", port, val, eip);
+        break;
+    }
+
+    /* PCRTC1 (0x602000..0x602FFF) */
+    case 0x602000 ... 0x602fff: {
+        uint32_t off = addr - 0x602000;
+        if (off == 0x100) s->pcrtc[1].intr &= ~((uint32_t)val);
+        else if (off == 0x140) s->pcrtc[1].intr_en = val;
+        else if ((off >> 2) < 256) s->pcrtc[1].regs[off >> 2] = val;
+        fprintf(stderr, "[NV34M PCRTC1 W] offset=0x%04x = 0x%08"PRIx64" (eip=0x%08x)\n", off, val, eip);
+        break;
+    }
+
+    /* PRMCIO1 (0x603000..0x603FFF: Secondary VGA IO shadow) */
+    case 0x603000 ... 0x603fff: {
+        uint32_t port = 0x3c0 + (addr & 0x1f);
+        vga_ioport_write(&s->vga, port, val);
+        fprintf(stderr, "[NV34M PRMCIO1 W] port=0x%03x = 0x%08"PRIx64" (eip=0x%08x)\n", port, val, eip);
+        break;
+    }
+
+    /* PRAMDAC0 (0x680000..0x680FFF: Primary Display Output Engine) */
     case 0x680000 ... 0x680fff: {
-        if (addr >= 0x6803c6 && addr <= 0x6803c9) {
-            uint32_t port = 0x3c6 + (addr - 0x6803c6);
-            vga_ioport_write(&s->vga, port, val);
-        } else {
-            uint32_t idx = (addr - 0x680000) >> 2;
-            if (idx < 1024) {
-                s->head_regs[idx] = val;
-                const char *sub = (addr < 0x680400) ? "HEAD0" :
-                                  (addr < 0x680500) ? "RAMDAC" :
-                                  (addr < 0x680600) ? "PLL" :
-                                  (addr < 0x680800) ? "GENERAL" : "FP_LVDS";
-                fprintf(stderr, "[NV34M DISPLAY W] %s (0x%06"HWADDR_PRIx") = 0x%08"PRIx64" (eip=0x%08x)\n",
-                        sub, addr, val, eip);
-            }
-        }
+        uint32_t off = addr - 0x680000;
+        uint32_t idx = off >> 2;
+        if (idx < 1024) s->pramdac[0].regs[idx] = val;
+        const char *sub = (off < 0x400) ? "CURSOR" :
+                          (off < 0x600) ? "PLL" :
+                          (off < 0x800) ? "GENERAL" : "FP";
+        fprintf(stderr, "[NV34M PRAMDAC0 W] %s (0x%06"HWADDR_PRIx") = 0x%08"PRIx64" (eip=0x%08x)\n",
+                sub, addr, val, eip);
+        break;
+    }
+
+    /* PRMDIO0 (0x681000..0x681FFF: Primary VGA DAC IO shadow) */
+    case 0x681000 ... 0x681fff: {
+        uint32_t port = 0x3c0 + (addr & 0x1f);
+        vga_ioport_write(&s->vga, port, val);
+        fprintf(stderr, "[NV34M PRMDIO0 W] port=0x%03x = 0x%08"PRIx64" (eip=0x%08x)\n", port, val, eip);
+        break;
+    }
+
+    /* PRAMDAC1 (0x682000..0x682FFF: Secondary Display Output Engine) */
+    case 0x682000 ... 0x682fff: {
+        uint32_t off = addr - 0x682000;
+        uint32_t idx = off >> 2;
+        if (idx < 1024) s->pramdac[1].regs[idx] = val;
+        const char *sub = (off < 0x400) ? "CURSOR" :
+                          (off < 0x600) ? "PLL" :
+                          (off < 0x800) ? "GENERAL" : "FP";
+        fprintf(stderr, "[NV34M PRAMDAC1 W] %s (0x%06"HWADDR_PRIx") = 0x%08"PRIx64" (eip=0x%08x)\n",
+                sub, addr, val, eip);
+        break;
+    }
+
+    /* PRMDIO1 (0x683000..0x683FFF: Secondary VGA DAC IO shadow) */
+    case 0x683000 ... 0x683fff: {
+        uint32_t port = 0x3c0 + (addr & 0x1f);
+        vga_ioport_write(&s->vga, port, val);
+        fprintf(stderr, "[NV34M PRMDIO1 W] port=0x%03x = 0x%08"PRIx64" (eip=0x%08x)\n", port, val, eip);
         break;
     }
 
@@ -416,6 +579,7 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
         break;
     }
 }
+
 
 static const MemoryRegionOps nv34m_mmio_ops = {
     .read = nv34m_mmio_read,
@@ -447,9 +611,8 @@ static void nv34m_reset(DeviceState *dev)
     s->pbus_debug_1 = 0x00000000;
     s->pstraps = 0x00000014; /* 32MB DDR1, 1400x1050 panel */
 
-    s->pramdac_general = 0x00000000;
-    s->pramdac_vpll = 0x00000000;
-    s->pramdac_mpll = 0x00000000;
+    memset(&s->pcrtc, 0, sizeof(s->pcrtc));
+    memset(&s->pramdac, 0, sizeof(s->pramdac));
 
     /* Initialize PFB (Memory Controller - 32MB DDR1) */
     s->pfb.cfg0 = 0x00000000;
