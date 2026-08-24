@@ -146,24 +146,15 @@ typedef struct NVPFBState {
 typedef struct NVPCRTCState {
     uint32_t intr;
     uint32_t intr_en;
-    uint32_t regs[256];
+    uint32_t regs[1024];
 } NVPCRTCState;
 
 typedef struct NVPRAMDACState {
-    uint32_t nvpll;
-    uint32_t mpll;
-    uint32_t vpll;
-    uint32_t vpll2;
-    uint32_t pll_ctrl;
-    uint32_t pll_setup;
-    uint32_t sel_clk;
-    uint32_t nvpll_s2;
-    uint32_t mpll_s2;
-    uint32_t vpll_s2;
-    uint32_t vpll2_s2;
-    uint32_t general_ctrl;
     uint32_t regs[1024];
 } NVPRAMDACState;
+
+#define PRAMDAC_REG(s, head, off) ((s)->pramdac[(head)].regs[((off) & 0xFFF) >> 2])
+#define PCRTC_REG(s, head, off)   ((s)->pcrtc[(head)].regs[((off) & 0xFFF) >> 2])
 
 struct NV34MState {
     PCIDevice dev;
@@ -196,6 +187,9 @@ struct NV34MState {
 
     /* PRAMDAC0 & PRAMDAC1 */
     NVPRAMDACState pramdac[2];
+
+    /* 60 Hz Synthetic VBLANK Timer */
+    QEMUTimer *vblank_timer;
 
     const GraphicHwOps *default_hw_ops;
     uint8_t *ramin_buf;
@@ -301,9 +295,10 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
     /* PCRTC0 (0x600000..0x600FFF) */
     case 0x600000 ... 0x600fff: {
         uint32_t off = addr - 0x600000;
+        uint32_t idx = off >> 2;
         if (off == 0x100) val = s->pcrtc[0].intr;
         else if (off == 0x140) val = s->pcrtc[0].intr_en;
-        else if ((off >> 2) < 256) val = s->pcrtc[0].regs[off >> 2];
+        else if (idx < ARRAY_SIZE(s->pcrtc[0].regs)) val = s->pcrtc[0].regs[idx];
         fprintf(stderr, "[NV34M PCRTC0 R] offset=0x%04x -> 0x%08x (eip=0x%08x)\n", off, val, eip);
         break;
     }
@@ -319,9 +314,10 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
     /* PCRTC1 (0x602000..0x602FFF) */
     case 0x602000 ... 0x602fff: {
         uint32_t off = addr - 0x602000;
+        uint32_t idx = off >> 2;
         if (off == 0x100) val = s->pcrtc[1].intr;
         else if (off == 0x140) val = s->pcrtc[1].intr_en;
-        else if ((off >> 2) < 256) val = s->pcrtc[1].regs[off >> 2];
+        else if (idx < ARRAY_SIZE(s->pcrtc[1].regs)) val = s->pcrtc[1].regs[idx];
         fprintf(stderr, "[NV34M PCRTC1 R] offset=0x%04x -> 0x%08x (eip=0x%08x)\n", off, val, eip);
         break;
     }
@@ -338,10 +334,11 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
     case 0x680000 ... 0x680fff: {
         uint32_t off = addr - 0x680000;
         uint32_t idx = off >> 2;
-        if (idx < 1024) val = s->pramdac[0].regs[idx];
-        const char *sub = (off < 0x400) ? "CURSOR" :
-                          (off < 0x600) ? "PLL" :
-                          (off < 0x800) ? "GENERAL" : "FP";
+        if (idx < ARRAY_SIZE(s->pramdac[0].regs)) val = s->pramdac[0].regs[idx];
+        const char *sub = (off >= 0x300 && off <= 0x33f) ? "CURSOR" :
+                          (off >= 0x500 && off <= 0x5ff) ? "PLL" :
+                          (off >= 0x600 && off <= 0x7ff) ? "GENERAL" :
+                          (off >= 0x800 && off <= 0x8ff) ? "FP" : "OTHER";
         fprintf(stderr, "[NV34M PRAMDAC0 R] %s (0x%06"HWADDR_PRIx") -> 0x%08x (eip=0x%08x)\n",
                 sub, addr, val, eip);
         break;
@@ -359,10 +356,11 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
     case 0x682000 ... 0x682fff: {
         uint32_t off = addr - 0x682000;
         uint32_t idx = off >> 2;
-        if (idx < 1024) val = s->pramdac[1].regs[idx];
-        const char *sub = (off < 0x400) ? "CURSOR" :
-                          (off < 0x600) ? "PLL" :
-                          (off < 0x800) ? "GENERAL" : "FP";
+        if (idx < ARRAY_SIZE(s->pramdac[1].regs)) val = s->pramdac[1].regs[idx];
+        const char *sub = (off >= 0x300 && off <= 0x33f) ? "CURSOR" :
+                          (off >= 0x500 && off <= 0x5ff) ? "PLL" :
+                          (off >= 0x600 && off <= 0x7ff) ? "GENERAL" :
+                          (off >= 0x800 && off <= 0x8ff) ? "FP" : "OTHER";
         fprintf(stderr, "[NV34M PRAMDAC1 R] %s (0x%06"HWADDR_PRIx") -> 0x%08x (eip=0x%08x)\n",
                 sub, addr, val, eip);
         break;
@@ -485,9 +483,10 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
     /* PCRTC0 (0x600000..0x600FFF) */
     case 0x600000 ... 0x600fff: {
         uint32_t off = addr - 0x600000;
+        uint32_t idx = off >> 2;
         if (off == 0x100) s->pcrtc[0].intr &= ~((uint32_t)val);
         else if (off == 0x140) s->pcrtc[0].intr_en = val;
-        else if ((off >> 2) < 256) s->pcrtc[0].regs[off >> 2] = val;
+        else if (idx < ARRAY_SIZE(s->pcrtc[0].regs)) s->pcrtc[0].regs[idx] = val;
         fprintf(stderr, "[NV34M PCRTC0 W] offset=0x%04x = 0x%08"PRIx64" (eip=0x%08x)\n", off, val, eip);
         break;
     }
@@ -503,9 +502,10 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
     /* PCRTC1 (0x602000..0x602FFF) */
     case 0x602000 ... 0x602fff: {
         uint32_t off = addr - 0x602000;
+        uint32_t idx = off >> 2;
         if (off == 0x100) s->pcrtc[1].intr &= ~((uint32_t)val);
         else if (off == 0x140) s->pcrtc[1].intr_en = val;
-        else if ((off >> 2) < 256) s->pcrtc[1].regs[off >> 2] = val;
+        else if (idx < ARRAY_SIZE(s->pcrtc[1].regs)) s->pcrtc[1].regs[idx] = val;
         fprintf(stderr, "[NV34M PCRTC1 W] offset=0x%04x = 0x%08"PRIx64" (eip=0x%08x)\n", off, val, eip);
         break;
     }
@@ -522,10 +522,11 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
     case 0x680000 ... 0x680fff: {
         uint32_t off = addr - 0x680000;
         uint32_t idx = off >> 2;
-        if (idx < 1024) s->pramdac[0].regs[idx] = val;
-        const char *sub = (off < 0x400) ? "CURSOR" :
-                          (off < 0x600) ? "PLL" :
-                          (off < 0x800) ? "GENERAL" : "FP";
+        if (idx < ARRAY_SIZE(s->pramdac[0].regs)) s->pramdac[0].regs[idx] = val;
+        const char *sub = (off >= 0x300 && off <= 0x33f) ? "CURSOR" :
+                          (off >= 0x500 && off <= 0x5ff) ? "PLL" :
+                          (off >= 0x600 && off <= 0x7ff) ? "GENERAL" :
+                          (off >= 0x800 && off <= 0x8ff) ? "FP" : "OTHER";
         fprintf(stderr, "[NV34M PRAMDAC0 W] %s (0x%06"HWADDR_PRIx") = 0x%08"PRIx64" (eip=0x%08x)\n",
                 sub, addr, val, eip);
         break;
@@ -543,10 +544,11 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
     case 0x682000 ... 0x682fff: {
         uint32_t off = addr - 0x682000;
         uint32_t idx = off >> 2;
-        if (idx < 1024) s->pramdac[1].regs[idx] = val;
-        const char *sub = (off < 0x400) ? "CURSOR" :
-                          (off < 0x600) ? "PLL" :
-                          (off < 0x800) ? "GENERAL" : "FP";
+        if (idx < ARRAY_SIZE(s->pramdac[1].regs)) s->pramdac[1].regs[idx] = val;
+        const char *sub = (off >= 0x300 && off <= 0x33f) ? "CURSOR" :
+                          (off >= 0x500 && off <= 0x5ff) ? "PLL" :
+                          (off >= 0x600 && off <= 0x7ff) ? "GENERAL" :
+                          (off >= 0x800 && off <= 0x8ff) ? "FP" : "OTHER";
         fprintf(stderr, "[NV34M PRAMDAC1 W] %s (0x%06"HWADDR_PRIx") = 0x%08"PRIx64" (eip=0x%08x)\n",
                 sub, addr, val, eip);
         break;
@@ -724,6 +726,16 @@ void nv34m_set_system_ram(uint8_t *ram)
 
 /* VGA display update is handled by standard vga_update_display via vga_init() */
 
+#define NV_PCRTC_INTR_VBLANK 0x00000001
+
+static void nv34m_vblank_timer_cb(void *opaque)
+{
+    NV34MState *s = opaque;
+    s->pcrtc[0].intr |= NV_PCRTC_INTR_VBLANK;
+    s->pcrtc[1].intr |= NV_PCRTC_INTR_VBLANK;
+    timer_mod(s->vblank_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 16666667ULL);
+}
+
 static void nv34m_realize(PCIDevice *dev, Error **errp)
 {
     NV34MState *s = NV34M_VGA(dev);
@@ -803,17 +815,27 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
         }
     }
 
+
+
     /* Enable PCI Command: Memory Space + I/O Space + Bus Master */
     pci_set_word(dev->config + PCI_COMMAND,
                  PCI_COMMAND_IO | PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER);
 
     /* Interrupt routing */
     pci_config_set_interrupt_pin(dev->config, 1); /* Pin A */
+
+    /* 60 Hz Synthetic VBLANK Timer (~16.666 ms) */
+    s->vblank_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, nv34m_vblank_timer_cb, s);
+    timer_mod(s->vblank_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 16666667ULL);
 }
 
 static void nv34m_exit(PCIDevice *dev)
 {
     NV34MState *s = NV34M_VGA(dev);
+    if (s->vblank_timer) {
+        timer_free(s->vblank_timer);
+        s->vblank_timer = NULL;
+    }
     g_free(s->ramin_buf);
 }
 
