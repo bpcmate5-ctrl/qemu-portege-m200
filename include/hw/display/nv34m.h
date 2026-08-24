@@ -17,6 +17,8 @@
 #ifndef HW_NV34M_H
 #define HW_NV34M_H
 
+#include "exec/hwaddr.h"
+
 #define TYPE_NV34M_VGA "nv34m-vga"
 
 void nv34m_vga_write_text(int row, int col, uint8_t ch, uint8_t attr);
@@ -24,6 +26,8 @@ void nv34m_vga_clear_screen(uint8_t attr);
 void nv34m_vga_set_mode(int width, int height, int bpp);
 void nv34m_vga_sync_ram_buffer(const uint8_t *ram);
 void nv34m_set_system_ram(uint8_t *ram);
+void nv34m_log_vga_mem_write(hwaddr addr, unsigned size);
+void nv34m_log_vga_ioport_write(uint32_t addr, uint32_t val);
 uint32_t pc_m200_get_cpu_eip(void);
 
 #endif

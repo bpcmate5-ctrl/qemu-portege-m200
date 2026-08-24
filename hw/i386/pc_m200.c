@@ -382,13 +382,10 @@ static void toshiba_ivt_write(void *opaque, hwaddr addr, uint64_t val, unsigned 
                 (new_vec >> 16) & 0xffff, new_vec & 0xffff,
                 pc_m200_get_cpu_eip());
 
-        if (toshiba_system_ram) {
+        if (m200_real_vbios_int10 && toshiba_system_ram) {
             memcpy(toshiba_system_ram + addr, &val, size);
         }
-        if (m200_real_vbios_int10) {
-            return;
-        }
-        /* Compatibility mode: keep C trap active */
+        /* In compatibility mode: keep C trap active without modifying underlying IVT */
         return;
     }
     if (toshiba_system_ram && (addr + size) <= 1024) {

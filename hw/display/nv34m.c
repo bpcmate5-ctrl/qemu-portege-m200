@@ -605,6 +605,7 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
     case 0x600000 ... 0x600fff: {
         uint32_t off = addr - 0x600000;
         uint32_t idx = off >> 2;
+        s->count_pcrtc_writes++;
         if (off == 0x100) {
             s->pcrtc[0].intr &= ~((uint32_t)val);
             nv34m_update_irq(s);
@@ -1036,6 +1037,47 @@ static uint8_t *nv34m_ram_ptr = NULL;
 void nv34m_set_system_ram(uint8_t *ram)
 {
     nv34m_ram_ptr = ram;
+}
+
+void nv34m_log_vga_mem_write(hwaddr addr, unsigned size)
+{
+    if (!global_nv34m_state) return;
+    if (addr < 0x10000) {
+        global_nv34m_state->count_a0000_writes++;
+    } else if (addr >= 0x18000) {
+        global_nv34m_state->count_b8000_writes++;
+    }
+}
+
+void nv34m_log_vga_ioport_write(uint32_t addr, uint32_t val)
+{
+    static uint32_t seq_idx = 0;
+    static uint32_t gc_idx = 0;
+    static uint32_t crtc_idx = 0;
+
+    switch (addr) {
+    case 0x3c4: seq_idx = val & 0x1f; break;
+    case 0x3c5:
+        if (seq_idx == 0x02 || seq_idx == 0x04) {
+            fprintf(stderr, "[VGA SEQ W] index=0x%02x val=0x%02x (MapMask / MemMode)\n", seq_idx, val);
+        }
+        break;
+    case 0x3ce: gc_idx = val & 0x0f; break;
+    case 0x3cf:
+        if (gc_idx <= 0x08) {
+            fprintf(stderr, "[VGA GC W] index=0x%02x val=0x%02x\n", gc_idx, val);
+        }
+        break;
+    case 0x3d4: crtc_idx = val & 0x7f; break;
+    case 0x3d5:
+        if (crtc_idx == 0x09 || crtc_idx == 0x14 || crtc_idx == 0x17) {
+            fprintf(stderr, "[VGA CRTC W] index=0x%02x val=0x%02x\n", crtc_idx, val);
+        }
+        break;
+    case 0x3c0:
+        fprintf(stderr, "[VGA ATTR W] val=0x%02x\n", val);
+        break;
+    }
 }
 
 #define NV_PCRTC_INTR_VBLANK 0x00000001

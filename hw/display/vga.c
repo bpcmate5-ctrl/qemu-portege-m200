@@ -37,6 +37,7 @@
 #include "ui/console.h"
 #include "qemu/timer.h"
 #include "hw/xen/xen.h"
+#include "hw/display/nv34m.h"
 #include "migration/vmstate.h"
 #include "trace.h"
 
@@ -426,6 +427,7 @@ void vga_ioport_write(void *opaque, uint32_t addr, uint32_t val)
         return;
     }
     trace_vga_std_write_io(addr, val);
+    nv34m_log_vga_ioport_write(addr, val);
 
     switch(addr) {
     case VGA_ATT_W:
@@ -2084,6 +2086,7 @@ static void vga_mem_write(void *opaque, hwaddr addr,
 {
     VGACommonState *s = opaque;
 
+    nv34m_log_vga_mem_write(addr, size);
     vga_mem_writeb(s, addr, data);
 }
 
