@@ -130,9 +130,11 @@ void pci_data_write(PCIBus *s, uint32_t addr, uint32_t val, unsigned len)
     uint8_t bus_num = addr >> 16;
     uint8_t devfn = addr >> 8;
 
-    fprintf(stderr, "[PCI CFG W] %02x:%02x.%d offset=0x%02x val=0x%x len=%d (dev=%s)\n",
-            bus_num, PCI_SLOT(devfn), PCI_FUNC(devfn), config_addr, val, len,
-            pci_dev ? pci_dev->name : "NONE");
+    if (pci_dev || bus_num <= 1) {
+        fprintf(stderr, "[PCI CFG W] %02x:%02x.%d offset=0x%02x val=0x%x len=%d (dev=%s)\n",
+                bus_num, PCI_SLOT(devfn), PCI_FUNC(devfn), config_addr, val, len,
+                pci_dev ? pci_dev->name : "NONE");
+    }
 
     if (!pci_dev) {
         trace_pci_cfg_write("empty", extract32(addr, 16, 8),
@@ -158,9 +160,11 @@ uint32_t pci_data_read(PCIBus *s, uint32_t addr, unsigned len)
                                           PCI_CONFIG_SPACE_SIZE, len);
     }
 
-    fprintf(stderr, "[PCI CFG R] %02x:%02x.%d offset=0x%02x len=%d -> 0x%x (dev=%s)\n",
-            bus_num, PCI_SLOT(devfn), PCI_FUNC(devfn), config_addr, len, val,
-            pci_dev ? pci_dev->name : "NONE");
+    if (pci_dev || (bus_num <= 1 && config_addr == 0)) {
+        fprintf(stderr, "[PCI CFG R] %02x:%02x.%d offset=0x%02x len=%d -> 0x%x (dev=%s)\n",
+                bus_num, PCI_SLOT(devfn), PCI_FUNC(devfn), config_addr, len, val,
+                pci_dev ? pci_dev->name : "NONE");
+    }
 
     if (!pci_dev) {
         trace_pci_cfg_read("empty", extract32(addr, 16, 8),
@@ -175,7 +179,6 @@ static void pci_host_config_write(void *opaque, hwaddr addr,
                                   uint64_t val, unsigned len)
 {
     PCIHostState *s = opaque;
-    fprintf(stderr, "[PCI HOST CFG_REG WRITE] addr=0x%"HWADDR_PRIx" val=0x%08"PRIx64" len=%d\n", addr, val, len);
     if (addr != 0 || len != 4) {
         return;
     }
@@ -186,18 +189,13 @@ static uint64_t pci_host_config_read(void *opaque, hwaddr addr,
                                      unsigned len)
 {
     PCIHostState *s = opaque;
-    uint32_t val = s->config_reg;
-    fprintf(stderr, "[PCI HOST CFG_REG READ] addr=0x%"HWADDR_PRIx" len=%d -> 0x%08x\n", addr, len, val);
-    return val;
+    return s->config_reg;
 }
 
 static void pci_host_data_write(void *opaque, hwaddr addr,
                                 uint64_t val, unsigned len)
 {
     PCIHostState *s = opaque;
-    fprintf(stderr, "[PCI HOST DATA WRITE] cfg_reg=0x%08x addr=0x%"HWADDR_PRIx" val=0x%08"PRIx64" len=%d\n",
-            s->config_reg, addr, val, len);
-
     if (s->config_reg & (1u << 31))
         pci_data_write(s->bus, s->config_reg | (addr & 3), val, len);
 }
@@ -206,9 +204,6 @@ static uint64_t pci_host_data_read(void *opaque,
                                    hwaddr addr, unsigned len)
 {
     PCIHostState *s = opaque;
-    fprintf(stderr, "[PCI HOST DATA READ] cfg_reg=0x%08x addr=0x%"HWADDR_PRIx" len=%d\n",
-            s->config_reg, addr, len);
-
     if (!(s->config_reg & (1U << 31))) {
         return 0xffffffff;
     }

@@ -165,8 +165,13 @@ static inline int load_segment_ra(CPUX86State *env, uint32_t *e1_ptr,
         return -1;
     }
     ptr = dt->base + index;
-    *e1_ptr = cpu_ldl_kernel_ra(env, ptr, retaddr);
-    *e2_ptr = cpu_ldl_kernel_ra(env, ptr + 4, retaddr);
+    if (!(env->cr[0] & CR0_PG_MASK)) {
+        cpu_physical_memory_read(ptr, e1_ptr, 4);
+        cpu_physical_memory_read(ptr + 4, e2_ptr, 4);
+    } else {
+        *e1_ptr = cpu_ldl_kernel_ra(env, ptr, retaddr);
+        *e2_ptr = cpu_ldl_kernel_ra(env, ptr + 4, retaddr);
+    }
     return 0;
 }
 
@@ -1484,7 +1489,7 @@ void helper_ljmp_protected(CPUX86State *env, int new_cs, target_ulong new_eip,
                            target_ulong next_eip)
 {
     int gate_cs, type;
-    uint32_t e1, e2, cpl, dpl, rpl, limit;
+    uint32_t e1 = 0, e2 = 0, cpl, dpl, rpl, limit;
 
     if ((new_cs & 0xfffc) == 0) {
         raise_exception_err_ra(env, EXCP0D_GPF, 0, GETPC());

@@ -17,6 +17,7 @@
 #include "hw/i386/pc.h"
 #include "hw/i386/apic.h"
 #include "system/reset.h"
+#include "exec/tb-flush.h"
 #include "hw/pci-host/i855pm.h"
 #include "hw/southbridge/ich4m.h"
 #include "hw/rtc/mc146818rtc.h"
@@ -829,6 +830,10 @@ static const MemoryRegionOps toshiba_smbus_ops = {
     },
 };
 
+static MemoryRegion *g_smram_tseg = NULL;
+static uint8_t g_bios_image[0x80000];
+static bool g_bios_loaded = false;
+
 static void pc_m200_reset_handler(void *opaque)
 {
     X86MachineState *x86ms = opaque;
@@ -842,6 +847,33 @@ static void pc_m200_reset_handler(void *opaque)
             rv[2] = 0x29;
             rv[3] = 0x00;
             rv[4] = 0xf0; /* ljmp $0xF000, $0x291C */
+        }
+        if (g_smram_tseg && g_bios_loaded) {
+            uint8_t *tseg_ptr = (uint8_t *)memory_region_get_ram_ptr(g_smram_tseg);
+            uint8_t *mod3 = g_bios_image + 0x30000;
+            memcpy(tseg_ptr + 0xa0000, mod3, 0x10000);
+            memcpy(tseg_ptr + 0xb0000, mod3, 0x10000);
+
+            /* Preload GDT Table at 0xFEDBF000 (offset 0xBF000 in smram_tseg) */
+            uint8_t *gdt_dest = tseg_ptr + 0xbf000;
+            memcpy(gdt_dest, mod3 + 0x0046, 0x130);
+            gdt_dest[0x32] = 0x00; gdt_dest[0x34] = 0xda; gdt_dest[0x37] = 0xfe;
+            gdt_dest[0x3a] = 0x00; gdt_dest[0x3c] = 0xda; gdt_dest[0x3f] = 0xfe;
+
+            /* Preload IDT Table at 0xFEDBF140 (offset 0xBF140 in smram_tseg) */
+            uint8_t *idt = tseg_ptr + 0xbf140;
+            idt[0] = 0x53; idt[1] = 0xff;
+            memcpy(idt + 2, mod3 + 0x772f, 6);
+            for (int k = 1; k < 128; k++) {
+                memcpy(idt + k * 8, idt, 8);
+            }
+            for (int p = 0x7735; p < 0x7771; p += 3) {
+                uint8_t int_num = mod3[p];
+                uint16_t target_offset = *(uint16_t *)(mod3 + p + 1);
+                uint16_t *gate = (uint16_t *)(idt + int_num * 8);
+                gate[0] = target_offset;
+            }
+            tb_flush__exclusive_or_serial();
         }
     }
 }
@@ -1066,10 +1098,11 @@ static void m200_init(MachineState *machine)
                           "toshiba-port80", 1);
     memory_region_add_subregion_overlap(system_io, 0x80, port80_io, 100);
 
-    /* Map 128KB High SMRAM at 0xFEDA0000..0xFEDFFFFF */
-    MemoryRegion *smram_high = g_new(MemoryRegion, 1);
-    memory_region_init_ram(smram_high, NULL, "m200.smram-high", 0x20000, &error_fatal);
-    memory_region_add_subregion_overlap(system_memory, 0xfeda0000, smram_high, 1000);
+    /* Map 1MB Toshiba NoteBIOS High SMRAM / TSEG Window (0xFED00000..0xFEDFFFFF) */
+    MemoryRegion *smram_tseg = g_new(MemoryRegion, 1);
+    memory_region_init_ram(smram_tseg, NULL, "m200.smram-tseg", 0x100000, &error_fatal);
+    memory_region_add_subregion_overlap(system_memory, 0xfed00000, smram_tseg, 1000);
+    g_smram_tseg = smram_tseg;
 
     /* Map Toshiba authentic shadow RAM when 512K ROM is loaded */
     if (machine->firmware && (strstr(machine->firmware, "512") || strstr(machine->firmware, "TOSHIBA"))) {
@@ -1086,13 +1119,42 @@ static void m200_init(MachineState *machine)
             FILE *f = fopen(filename, "rb");
             if (f) {
                 uint8_t *ram = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
-                /* Preload full 512KB ROM into low RAM */
+                /* Preload full 512KB ROM into low RAM and static cache */
                 fseek(f, 0, SEEK_SET);
                 if (fread(ram, 1, 0x80000, f) != 0x80000) {}
+                fseek(f, 0, SEEK_SET);
+                if (fread(g_bios_image, 1, 0x80000, f) == 0x80000) {
+                    g_bios_loaded = true;
+                }
 
-                /* Preload Module 3 into High SMRAM at 0xFEDA0000 */
+                /* Preload Module 3 into High SMRAM at 0xFEDA0000 and 0xFEDB0000 */
+                uint8_t *tseg_ptr = (uint8_t *)memory_region_get_ram_ptr(smram_tseg);
                 fseek(f, 0x30000, SEEK_SET);
-                if (fread(memory_region_get_ram_ptr(smram_high), 1, 0x10000, f) == 0x10000) {}
+                if (fread(tseg_ptr + 0xa0000, 1, 0x10000, f) == 0x10000) {}
+                fseek(f, 0x30000, SEEK_SET);
+                if (fread(tseg_ptr + 0xb0000, 1, 0x10000, f) == 0x10000) {}
+
+                /* Preload authentic NoteBIOS GDT Table at 0xFEDBF000 (offset 0xBF000 in smram_tseg) */
+                uint8_t *gdt_dest = tseg_ptr + 0xbf000;
+                uint8_t *mod3 = tseg_ptr + 0xa0000;
+                memcpy(gdt_dest, mod3 + 0x0046, 0x130);
+                /* Pre-configure Selector 0x30 and 0x38 to point to 0xFEDA0000 */
+                gdt_dest[0x32] = 0x00; gdt_dest[0x34] = 0xda; gdt_dest[0x37] = 0xfe;
+                gdt_dest[0x3a] = 0x00; gdt_dest[0x3c] = 0xda; gdt_dest[0x3f] = 0xfe;
+
+                /* Preload authentic NoteBIOS IDT Table at 0xFEDBF140 (offset 0xBF140 in smram_tseg) */
+                uint8_t *idt = tseg_ptr + 0xbf140;
+                idt[0] = 0x53; idt[1] = 0xff;
+                memcpy(idt + 2, mod3 + 0x772f, 6);
+                for (int k = 1; k < 128; k++) {
+                    memcpy(idt + k * 8, idt, 8);
+                }
+                for (int p = 0x7735; p < 0x7771; p += 3) {
+                    uint8_t int_num = mod3[p];
+                    uint16_t target_offset = *(uint16_t *)(mod3 + p + 1);
+                    uint16_t *gate = (uint16_t *)(idt + int_num * 8);
+                    gate[0] = target_offset;
+                }
 
                 /* Map full 512KB Flash ROM at Top of 4GB Address Space (0xFFF80000..0xFFFFFFFF) */
                 MemoryRegion *bios_high = g_new(MemoryRegion, 1);
@@ -1326,11 +1388,6 @@ static void m200_init(MachineState *machine)
     MemoryRegion *smbus_io = g_new(MemoryRegion, 1);
     memory_region_init_io(smbus_io, OBJECT(machine), &toshiba_smbus_ops, smbus, "m200-smbus", 0x20);
     memory_region_add_subregion_overlap(system_io, 0xd880, smbus_io, 100);
-
-    /* Toshiba NoteBIOS High SMRAM / TSEG Window (0xFED00000..0xFEDFFFFF, size 1MB) */
-    MemoryRegion *smram_tseg = g_new(MemoryRegion, 1);
-    memory_region_init_ram(smram_tseg, NULL, "m200-smram-tseg", 0x100000, &error_fatal);
-    memory_region_add_subregion(system_memory, 0xfed00000, smram_tseg);
 
     qemu_register_reset(pc_m200_reset_handler, x86ms);
 }
