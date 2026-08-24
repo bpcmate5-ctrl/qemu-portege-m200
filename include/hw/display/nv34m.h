@@ -24,5 +24,6 @@ void nv34m_vga_clear_screen(uint8_t attr);
 void nv34m_vga_set_mode(int width, int height, int bpp);
 void nv34m_vga_sync_ram_buffer(const uint8_t *ram);
 void nv34m_set_system_ram(uint8_t *ram);
+uint32_t pc_m200_get_cpu_eip(void);
 
 #endif

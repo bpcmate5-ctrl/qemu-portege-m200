@@ -140,10 +140,16 @@ struct NV34MState {
 
 static NV34MState *global_nv34m_state = NULL;
 
+static inline uint32_t nv34m_get_cpu_eip(void)
+{
+    return pc_m200_get_cpu_eip();
+}
+
 static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
     NV34MState *s = opaque;
     uint32_t val = 0;
+    uint32_t eip = nv34m_get_cpu_eip();
 
     switch (addr) {
     /* PMC (0x000000..0x000FFF) */
@@ -184,49 +190,49 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
     /* PFB (Memory Controller 0x100000..0x100FFF) */
     case NV_PFB_CFG0:
         val = s->pfb.cfg0;
-        fprintf(stderr, "[NV34M PFB R] CFG0 (0x100080) -> 0x%08x\n", val);
+        fprintf(stderr, "[NV34M PFB R] CFG0 (0x100080) -> 0x%08x (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_CFG1:
         val = s->pfb.cfg1;
-        fprintf(stderr, "[NV34M PFB R] CFG1 (0x100084) -> 0x%08x\n", val);
+        fprintf(stderr, "[NV34M PFB R] CFG1 (0x100084) -> 0x%08x (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_CSTATUS:
         val = s->pfb.cstatus ? s->pfb.cstatus : s->vga.vram_size;
-        fprintf(stderr, "[NV34M PFB R] CSTATUS/VRAM_SIZE (0x100100) -> 0x%08x\n", val);
+        fprintf(stderr, "[NV34M PFB R] CSTATUS/VRAM_SIZE (0x100100) -> 0x%08x (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_TIMING0:
         val = s->pfb.timing0;
-        fprintf(stderr, "[NV34M PFB R] TIMING0 (0x100200) -> 0x%08x\n", val);
+        fprintf(stderr, "[NV34M PFB R] TIMING0 (0x100200) -> 0x%08x (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_TIMING1:
         val = s->pfb.timing1;
-        fprintf(stderr, "[NV34M PFB R] TIMING1 (0x100204) -> 0x%08x\n", val);
+        fprintf(stderr, "[NV34M PFB R] TIMING1 (0x100204) -> 0x%08x (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_TIMING2:
         val = s->pfb.timing2;
-        fprintf(stderr, "[NV34M PFB R] TIMING2 (0x100208) -> 0x%08x\n", val);
+        fprintf(stderr, "[NV34M PFB R] TIMING2 (0x100208) -> 0x%08x (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_RAM_AMOUNT:
         val = s->pfb.ram_amount ? s->pfb.ram_amount : s->vga.vram_size;
-        fprintf(stderr, "[NV34M PFB R] RAM_AMOUNT (0x10020c) -> 0x%08x\n", val);
+        fprintf(stderr, "[NV34M PFB R] RAM_AMOUNT (0x10020c) -> 0x%08x (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_REFRESH:
         val = s->pfb.refresh;
-        fprintf(stderr, "[NV34M PFB R] REFRESH (0x100210) -> 0x%08x\n", val);
+        fprintf(stderr, "[NV34M PFB R] REFRESH (0x100210) -> 0x%08x (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_RAM_CFG:
         val = s->pfb.ram_cfg;
-        fprintf(stderr, "[NV34M PFB R] RAM_CFG (0x100220) -> 0x%08x\n", val);
+        fprintf(stderr, "[NV34M PFB R] RAM_CFG (0x100220) -> 0x%08x (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_WBC:
         val = s->pfb.wbc;
-        fprintf(stderr, "[NV34M PFB R] WBC (0x100400) -> 0x%08x\n", val);
+        fprintf(stderr, "[NV34M PFB R] WBC (0x100400) -> 0x%08x (eip=0x%08x)\n", val, eip);
         break;
 
     /* PSTRAPS (0x101000) */
     case NV_PSTRAPS:
         val = s->pstraps;
-        fprintf(stderr, "[NV34M PSTRAPS R] (0x101000) -> 0x%08x\n", val);
+        fprintf(stderr, "[NV34M PSTRAPS R] (0x101000) -> 0x%08x (eip=0x%08x)\n", val, eip);
         break;
 
     /* Legacy VGA CRTC / Sequencer / GC shadow */
@@ -246,7 +252,12 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
             uint32_t idx = (addr - 0x680000) >> 2;
             if (idx < 1024) {
                 val = s->head_regs[idx];
-                fprintf(stderr, "[NV34M DISPLAY R] offset=0x%04x -> 0x%08x\n", (uint32_t)(addr - 0x680000), val);
+                const char *sub = (addr < 0x680400) ? "HEAD0" :
+                                  (addr < 0x680500) ? "RAMDAC" :
+                                  (addr < 0x680600) ? "PLL" :
+                                  (addr < 0x680800) ? "GENERAL" : "FP_LVDS";
+                fprintf(stderr, "[NV34M DISPLAY R] %s (0x%06"HWADDR_PRIx") -> 0x%08x (eip=0x%08x)\n",
+                        sub, addr, val, eip);
             }
         }
         break;
@@ -262,10 +273,11 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
 
     default:
         if (addr >= 0x100000 && addr < 0x101000) {
-            fprintf(stderr, "[NV34M PFB R (unhandled)] offset=0x%04x size=%u -> 0x%08x\n",
-                    (uint32_t)(addr - 0x100000), size, val);
+            fprintf(stderr, "[NV34M PFB R (unhandled)] offset=0x%04x size=%u -> 0x%08x (eip=0x%08x)\n",
+                    (uint32_t)(addr - 0x100000), size, val, eip);
         } else {
-            fprintf(stderr, "[NV34M MMIO READ] addr=0x%06"HWADDR_PRIx" size=%u -> 0x%08x\n", addr, size, val);
+            fprintf(stderr, "[NV34M MMIO READ] addr=0x%06"HWADDR_PRIx" size=%u -> 0x%08x (eip=0x%08x)\n",
+                    addr, size, val, eip);
         }
         break;
     }
@@ -276,6 +288,7 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
 static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
     NV34MState *s = opaque;
+    uint32_t eip = nv34m_get_cpu_eip();
 
     switch (addr) {
     /* PMC */
@@ -311,49 +324,49 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
     /* PFB (Memory Controller 0x100000..0x100FFF) */
     case NV_PFB_CFG0:
         s->pfb.cfg0 = val;
-        fprintf(stderr, "[NV34M PFB W] CFG0 (0x100080) = 0x%08"PRIx64"\n", val);
+        fprintf(stderr, "[NV34M PFB W] CFG0 (0x100080) = 0x%08"PRIx64" (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_CFG1:
         s->pfb.cfg1 = val;
-        fprintf(stderr, "[NV34M PFB W] CFG1 (0x100084) = 0x%08"PRIx64"\n", val);
+        fprintf(stderr, "[NV34M PFB W] CFG1 (0x100084) = 0x%08"PRIx64" (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_CSTATUS:
         s->pfb.cstatus = val;
-        fprintf(stderr, "[NV34M PFB W] CSTATUS (0x100100) = 0x%08"PRIx64"\n", val);
+        fprintf(stderr, "[NV34M PFB W] CSTATUS (0x100100) = 0x%08"PRIx64" (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_TIMING0:
         s->pfb.timing0 = val;
-        fprintf(stderr, "[NV34M PFB W] TIMING0 (0x100200) = 0x%08"PRIx64"\n", val);
+        fprintf(stderr, "[NV34M PFB W] TIMING0 (0x100200) = 0x%08"PRIx64" (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_TIMING1:
         s->pfb.timing1 = val;
-        fprintf(stderr, "[NV34M PFB W] TIMING1 (0x100204) = 0x%08"PRIx64"\n", val);
+        fprintf(stderr, "[NV34M PFB W] TIMING1 (0x100204) = 0x%08"PRIx64" (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_TIMING2:
         s->pfb.timing2 = val;
-        fprintf(stderr, "[NV34M PFB W] TIMING2 (0x100208) = 0x%08"PRIx64"\n", val);
+        fprintf(stderr, "[NV34M PFB W] TIMING2 (0x100208) = 0x%08"PRIx64" (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_RAM_AMOUNT:
         s->pfb.ram_amount = val;
-        fprintf(stderr, "[NV34M PFB W] RAM_AMOUNT (0x10020c) = 0x%08"PRIx64"\n", val);
+        fprintf(stderr, "[NV34M PFB W] RAM_AMOUNT (0x10020c) = 0x%08"PRIx64" (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_REFRESH:
         s->pfb.refresh = val;
-        fprintf(stderr, "[NV34M PFB W] REFRESH (0x100210) = 0x%08"PRIx64"\n", val);
+        fprintf(stderr, "[NV34M PFB W] REFRESH (0x100210) = 0x%08"PRIx64" (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_RAM_CFG:
         s->pfb.ram_cfg = val;
-        fprintf(stderr, "[NV34M PFB W] RAM_CFG (0x100220) = 0x%08"PRIx64"\n", val);
+        fprintf(stderr, "[NV34M PFB W] RAM_CFG (0x100220) = 0x%08"PRIx64" (eip=0x%08x)\n", val, eip);
         break;
     case NV_PFB_WBC:
         s->pfb.wbc = val;
-        fprintf(stderr, "[NV34M PFB W] WBC (0x100400) = 0x%08"PRIx64"\n", val);
+        fprintf(stderr, "[NV34M PFB W] WBC (0x100400) = 0x%08"PRIx64" (eip=0x%08x)\n", val, eip);
         break;
 
     /* PSTRAPS */
     case NV_PSTRAPS:
         s->pstraps = val;
-        fprintf(stderr, "[NV34M PSTRAPS W] (0x101000) = 0x%08"PRIx64"\n", val);
+        fprintf(stderr, "[NV34M PSTRAPS W] (0x101000) = 0x%08"PRIx64" (eip=0x%08x)\n", val, eip);
         break;
 
     /* Legacy VGA CRTC / Sequencer / GC shadow */
@@ -373,8 +386,12 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
             uint32_t idx = (addr - 0x680000) >> 2;
             if (idx < 1024) {
                 s->head_regs[idx] = val;
-                fprintf(stderr, "[NV34M DISPLAY W] offset=0x%04x val=0x%08"PRIx64"\n",
-                        (uint32_t)(addr - 0x680000), val);
+                const char *sub = (addr < 0x680400) ? "HEAD0" :
+                                  (addr < 0x680500) ? "RAMDAC" :
+                                  (addr < 0x680600) ? "PLL" :
+                                  (addr < 0x680800) ? "GENERAL" : "FP_LVDS";
+                fprintf(stderr, "[NV34M DISPLAY W] %s (0x%06"HWADDR_PRIx") = 0x%08"PRIx64" (eip=0x%08x)\n",
+                        sub, addr, val, eip);
             }
         }
         break;
@@ -390,11 +407,11 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
 
     default:
         if (addr >= 0x100000 && addr < 0x101000) {
-            fprintf(stderr, "[NV34M PFB W (unhandled)] offset=0x%04x val=0x%08"PRIx64" size=%u\n",
-                    (uint32_t)(addr - 0x100000), val, size);
+            fprintf(stderr, "[NV34M PFB W (unhandled)] offset=0x%04x val=0x%08"PRIx64" size=%u (eip=0x%08x)\n",
+                    (uint32_t)(addr - 0x100000), val, size, eip);
         } else {
-            fprintf(stderr, "[NV34M MMIO WRITE] addr=0x%06"HWADDR_PRIx" val=0x%08"PRIx64" size=%u\n",
-                    addr, val, size);
+            fprintf(stderr, "[NV34M MMIO WRITE] addr=0x%06"HWADDR_PRIx" val=0x%08"PRIx64" size=%u (eip=0x%08x)\n",
+                    addr, val, size, eip);
         }
         break;
     }

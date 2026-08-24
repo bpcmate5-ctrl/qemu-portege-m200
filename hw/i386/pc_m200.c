@@ -45,6 +45,16 @@ static uint8_t toshiba_m200_port85 = 0x00;
 static uint8_t *toshiba_system_ram = NULL;
 static MemoryRegion *g_shadow_ram_f0000 = NULL;
 
+uint32_t pc_m200_get_cpu_eip(void)
+{
+    CPUState *cpu = current_cpu ? current_cpu : first_cpu;
+    if (cpu) {
+        X86CPU *x86_cpu = X86_CPU(cpu);
+        return x86_cpu->env.eip;
+    }
+    return 0;
+}
+
 static uint64_t toshiba_m200_io_read(void *opaque, hwaddr addr, unsigned size)
 {
     return toshiba_m200_port85;
