@@ -349,10 +349,17 @@ static const MemoryRegionOps toshiba_kbc_status_ops = {
     },
 };
 
+/* Real VBIOS INT 10h Mode Toggle (false = compatibility C shim, true = authentic VBIOS IVT) */
+static bool m200_real_vbios_int10 = true;
+
 /* IVT Memory Intercept (0x00000000..0x000003FF) */
 static uint64_t toshiba_ivt_read(void *opaque, hwaddr addr, unsigned size)
 {
     if (addr == 0x40 && size == 4) {
+        if (m200_real_vbios_int10 && toshiba_system_ram) {
+            uint32_t vec = *(uint32_t *)(toshiba_system_ram + 0x40);
+            return vec;
+        }
         return 0xf000f000;
     }
     if (toshiba_system_ram && (addr + size) <= 1024) {
@@ -366,7 +373,22 @@ static uint64_t toshiba_ivt_read(void *opaque, hwaddr addr, unsigned size)
 static void toshiba_ivt_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
     if (addr >= 0x40 && addr < 0x44) {
-        /* Ignore overwrites to INT 10h vector to keep C trap active */
+        uint32_t old_vec = toshiba_system_ram ? *(uint32_t *)(toshiba_system_ram + 0x40) : 0xf000f000;
+        uint32_t new_vec = old_vec;
+        memcpy((uint8_t *)&new_vec + (addr - 0x40), &val, size);
+        fprintf(stderr, "[M200 INT10 IVT WRITE] offset=0x%02x val=0x%08"PRIx64" size=%u (old=%04x:%04x, new=%04x:%04x, eip=0x%08x)\n",
+                (uint32_t)addr, val, size,
+                (old_vec >> 16) & 0xffff, old_vec & 0xffff,
+                (new_vec >> 16) & 0xffff, new_vec & 0xffff,
+                pc_m200_get_cpu_eip());
+
+        if (toshiba_system_ram) {
+            memcpy(toshiba_system_ram + addr, &val, size);
+        }
+        if (m200_real_vbios_int10) {
+            return;
+        }
+        /* Compatibility mode: keep C trap active */
         return;
     }
     if (toshiba_system_ram && (addr + size) <= 1024) {
@@ -1055,13 +1077,26 @@ static void m200_init(MachineState *machine)
                 fseek(f, 0x7de34, SEEK_SET);
                 if (fread(f0000_ptr + 0x1e34, 1, 6, f) == 6) {}
 
-                /* Place authentic System BIOS direct Boot entry jump at 0x000FFFF0 */
+                /* Install Option ROM Initialization Stub at 0xF000:2BE0 */
+                /* lcall $0xC000, $0x0003; ljmp $0xF000, $0x2BF0 */
+                f0000_ptr[0x2be0] = 0x9a;
+                f0000_ptr[0x2be1] = 0x03;
+                f0000_ptr[0x2be2] = 0x00;
+                f0000_ptr[0x2be3] = 0x00;
+                f0000_ptr[0x2be4] = 0xc0; /* lcall $0xC000, $0x0003 (Execute NVIDIA VBIOS Option ROM) */
+                f0000_ptr[0x2be5] = 0xea;
+                f0000_ptr[0x2be6] = 0xf0;
+                f0000_ptr[0x2be7] = 0x2b;
+                f0000_ptr[0x2be8] = 0x00;
+                f0000_ptr[0x2be9] = 0xf0; /* ljmp $0xF000, $0x2BF0 (Direct Boot Entry) */
+
+                /* Place authentic System BIOS entry jump at 0x000FFFF0 -> ljmp $0xF000, $0x2BE0 */
                 uint8_t *ptr = (uint8_t *)memory_region_get_ram_ptr(shadow_ram_f0000);
                 ptr[0xfff0] = 0xea;
-                ptr[0xfff1] = 0xf0;
+                ptr[0xfff1] = 0xe0;
                 ptr[0xfff2] = 0x2b;
                 ptr[0xfff3] = 0x00;
-                ptr[0xfff4] = 0xf0; /* ljmp $0xF000, $0x2BF0 (Direct Boot Entry) */
+                ptr[0xfff4] = 0xf0; /* ljmp $0xF000, $0x2BE0 */
                 fclose(f);
             }
             g_free(filename);

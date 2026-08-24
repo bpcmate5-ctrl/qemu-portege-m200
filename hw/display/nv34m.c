@@ -224,6 +224,15 @@ struct NV34MState {
     uint32_t native_fb_offset;    /* Framebuffer VRAM start offset */
     uint32_t live_test_frame;     /* Frame counter for live update testing */
 
+    /* Activity Counters for Milestone 2.5d Diagnostics */
+    uint64_t count_b8000_writes;
+    uint64_t count_a0000_writes;
+    uint64_t count_bar1_writes;
+    uint64_t count_pcrtc_writes;
+    uint64_t count_pramdac_writes;
+    uint64_t count_pmc_writes;
+    uint32_t activity_report_ticks;
+
     const GraphicHwOps *default_hw_ops;
     uint8_t *ramin_buf;
 };
@@ -1049,6 +1058,14 @@ static void nv34m_vblank_timer_cb(void *opaque)
                                s->active_vdisplay ? s->active_vdisplay : NV34M_NATIVE_PANEL_HEIGHT);
             }
         }
+    }
+
+    s->activity_report_ticks++;
+    if ((s->activity_report_ticks % 60) == 0 &&
+        (s->count_b8000_writes || s->count_a0000_writes || s->count_bar1_writes || s->count_pcrtc_writes || s->count_pramdac_writes)) {
+        fprintf(stderr, "[NV34M DISPLAY ACTIVITY] B8000 writes=%"PRIu64" | A0000 writes=%"PRIu64" | BAR1 writes=%"PRIu64" | PCRTC writes=%"PRIu64" | PRAMDAC writes=%"PRIu64"\n",
+                s->count_b8000_writes, s->count_a0000_writes, s->count_bar1_writes,
+                s->count_pcrtc_writes, s->count_pramdac_writes);
     }
 
     if (s->frame_period_ns == 0) {
