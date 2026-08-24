@@ -129,6 +129,18 @@
 
 /* PRMDIO1 (Secondary VGA DAC IO Shadow) 0x683000..0x683FFF */
 
+/* Toshiba Portégé M200 Authentic VBIOS Native Panel Constants (VBIOS offset 0x9494) */
+#define NV34M_NATIVE_PANEL_WIDTH       1400
+#define NV34M_NATIVE_PANEL_HEIGHT      1050
+#define NV34M_NATIVE_PANEL_HSYNC_START 1448
+#define NV34M_NATIVE_PANEL_HSYNC_END   1560
+#define NV34M_NATIVE_PANEL_HTOTAL      1688
+#define NV34M_NATIVE_PANEL_VSYNC_START 1051
+#define NV34M_NATIVE_PANEL_VSYNC_END   1054
+#define NV34M_NATIVE_PANEL_VTOTAL      1066
+#define NV34M_NATIVE_PANEL_PIXEL_CLOCK 108000000ULL /* 108.0 MHz */
+#define NV34M_NATIVE_FRAME_PERIOD_NS   16661185ULL  /* 16.661185 ms -> exact 60.0197 Hz */
+
 OBJECT_DECLARE_SIMPLE_TYPE(NV34MState, NV34M_VGA)
 
 typedef struct NVPFBState {
@@ -191,8 +203,19 @@ struct NV34MState {
     /* PRAMDAC0 & PRAMDAC1 */
     NVPRAMDACState pramdac[2];
 
-    /* 60 Hz Synthetic VBLANK Timer */
+    /* 60.0197 Hz Hardware VBLANK Timer */
     QEMUTimer *vblank_timer;
+
+    /* Display Timing State */
+    uint64_t frame_period_ns;
+    uint64_t pixel_clock_hz;
+    int64_t next_vblank_ns;
+    uint32_t active_hdisplay;
+    uint32_t active_htotal;
+    uint32_t active_vdisplay;
+    uint32_t active_vtotal;
+    bool display_timing_valid;
+    bool display_timing_dynamic;
 
     const GraphicHwOps *default_hw_ops;
     uint8_t *ramin_buf;
@@ -734,6 +757,17 @@ static void nv34m_reset(DeviceState *dev)
     memset(&s->pramdac, 0, sizeof(s->pramdac));
     nv34m_update_irq(s);
 
+    /* Initialize Display Timing State (1400x1050 @ 60.0197 Hz Native Panel) */
+    s->frame_period_ns = NV34M_NATIVE_FRAME_PERIOD_NS;
+    s->pixel_clock_hz = NV34M_NATIVE_PANEL_PIXEL_CLOCK;
+    s->active_hdisplay = NV34M_NATIVE_PANEL_WIDTH;
+    s->active_htotal = NV34M_NATIVE_PANEL_HTOTAL;
+    s->active_vdisplay = NV34M_NATIVE_PANEL_HEIGHT;
+    s->active_vtotal = NV34M_NATIVE_PANEL_VTOTAL;
+    s->display_timing_valid = true;
+    s->display_timing_dynamic = false;
+    s->next_vblank_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->frame_period_ns;
+
     /* Initialize PFB (Memory Controller - 32MB DDR1) */
     s->pfb.cfg0 = 0x00000000;
     s->pfb.cfg1 = 0x00000000;
@@ -842,17 +876,7 @@ void nv34m_set_system_ram(uint8_t *ram)
     nv34m_ram_ptr = ram;
 }
 
-/* Toshiba Portégé M200 Authentic VBIOS Native Panel Constants (VBIOS offset 0x9494) */
-#define NV34M_NATIVE_PANEL_WIDTH       1400
-#define NV34M_NATIVE_PANEL_HEIGHT      1050
-#define NV34M_NATIVE_PANEL_HSYNC_START 1448
-#define NV34M_NATIVE_PANEL_HSYNC_END   1560
-#define NV34M_NATIVE_PANEL_HTOTAL      1688
-#define NV34M_NATIVE_PANEL_VSYNC_START 1051
-#define NV34M_NATIVE_PANEL_VSYNC_END   1054
-#define NV34M_NATIVE_PANEL_VTOTAL      1066
-#define NV34M_NATIVE_PANEL_PIXEL_CLOCK 108000000ULL /* 108.0 MHz */
-#define NV34M_NATIVE_FRAME_PERIOD_NS   16661185ULL  /* 16.661185 ms -> exact 60.0197 Hz */
+
 
 #define NV_PCRTC_INTR_VBLANK 0x00000001
 
@@ -862,7 +886,16 @@ static void nv34m_vblank_timer_cb(void *opaque)
     s->pcrtc[0].intr |= NV_PCRTC_INTR_VBLANK;
     s->pcrtc[1].intr |= NV_PCRTC_INTR_VBLANK;
     nv34m_update_irq(s);
-    timer_mod(s->vblank_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NV34M_NATIVE_FRAME_PERIOD_NS);
+
+    if (s->frame_period_ns == 0) {
+        s->frame_period_ns = NV34M_NATIVE_FRAME_PERIOD_NS;
+    }
+    s->next_vblank_ns += s->frame_period_ns;
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    if (s->next_vblank_ns <= now) {
+        s->next_vblank_ns = now + s->frame_period_ns;
+    }
+    timer_mod(s->vblank_timer, s->next_vblank_ns);
 }
 
 static void nv34m_realize(PCIDevice *dev, Error **errp)
@@ -880,6 +913,17 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
     s->default_hw_ops = vga->hw_ops;
 
     vga_init(vga, OBJECT(dev), pci_address_space(dev), pci_address_space_io(dev), true);
+
+    /* Initialize Display Timing State (1400x1050 @ 60.0197 Hz Native Panel) */
+    s->frame_period_ns = NV34M_NATIVE_FRAME_PERIOD_NS;
+    s->pixel_clock_hz = NV34M_NATIVE_PANEL_PIXEL_CLOCK;
+    s->active_hdisplay = NV34M_NATIVE_PANEL_WIDTH;
+    s->active_htotal = NV34M_NATIVE_PANEL_HTOTAL;
+    s->active_vdisplay = NV34M_NATIVE_PANEL_HEIGHT;
+    s->active_vtotal = NV34M_NATIVE_PANEL_VTOTAL;
+    s->display_timing_valid = true;
+    s->display_timing_dynamic = false;
+    s->next_vblank_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->frame_period_ns;
 
     /* Load standard IBM CP437 8x16 font glyphs into Plane 2 of VRAM */
     if (vga->vram_ptr) {
@@ -944,8 +988,6 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
         }
     }
 
-
-
     /* Enable PCI Command: Memory Space + I/O Space + Bus Master */
     pci_set_word(dev->config + PCI_COMMAND,
                  PCI_COMMAND_IO | PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER);
@@ -955,7 +997,7 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
 
     /* 60.0197 Hz Hardware VBLANK Timer (~16.661 ms per authentic M200 VBIOS) */
     s->vblank_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, nv34m_vblank_timer_cb, s);
-    timer_mod(s->vblank_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NV34M_NATIVE_FRAME_PERIOD_NS);
+    timer_mod(s->vblank_timer, s->next_vblank_ns);
 }
 
 static void nv34m_exit(PCIDevice *dev)
