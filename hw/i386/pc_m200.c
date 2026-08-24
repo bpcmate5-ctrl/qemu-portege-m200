@@ -43,6 +43,7 @@
 /* Toshiba Portege M200 Motherboard Straps & Hardware ID (Port 0x85) */
 static uint8_t toshiba_m200_port85 = 0x00;
 static uint8_t *toshiba_system_ram = NULL;
+static MemoryRegion *g_shadow_ram_f0000 = NULL;
 
 static uint64_t toshiba_m200_io_read(void *opaque, hwaddr addr, unsigned size)
 {
@@ -366,6 +367,9 @@ static const MemoryRegionOps toshiba_kbc_status_ops = {
 /* IVT Memory Intercept (0x00000000..0x000003FF) */
 static uint64_t toshiba_ivt_read(void *opaque, hwaddr addr, unsigned size)
 {
+    if (addr == 0x40 && size == 4) {
+        return 0xf000f000;
+    }
     if (toshiba_system_ram && (addr + size) <= 1024) {
         uint64_t val = 0;
         memcpy(&val, toshiba_system_ram + addr, size);
@@ -376,6 +380,10 @@ static uint64_t toshiba_ivt_read(void *opaque, hwaddr addr, unsigned size)
 
 static void toshiba_ivt_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
+    if (addr >= 0x40 && addr < 0x44) {
+        /* Ignore overwrites to INT 10h vector to keep C trap active */
+        return;
+    }
     if (toshiba_system_ram && (addr + size) <= 1024) {
         memcpy(toshiba_system_ram + addr, &val, size);
     }
@@ -1004,8 +1012,10 @@ static void m200_init(MachineState *machine)
         pci_set_word(modem->config + PCI_SUBSYSTEM_ID, 0x0001);
     }
 
-    /* Video (NVIDIA GeForce FX Go5200 / NV34M) & Network */
-    pci_create_simple(pcms->pcibus, PCI_DEVFN(2, 0), TYPE_NV34M_VGA);
+    /* Video (NVIDIA GeForce FX Go5200 / NV34M on AGP Bridge 00:01.0 -> 01:00.0) & Network */
+    I855PMHost *i855 = I855PM_HOST_DEVICE(phb);
+    PCIBus *agp_bus = pci_bridge_get_sec_bus(PCI_BRIDGE(&i855->agp));
+    pci_create_simple(agp_bus, PCI_DEVFN(0, 0), TYPE_NV34M_VGA);
     pc_nic_init(pcmc, isa_bus, pcms->pcibus);
 
     /* Map NVIDIA GeForce FX Go5200 VBIOS at 0x000C0000 */
@@ -1032,6 +1042,7 @@ static void m200_init(MachineState *machine)
         memory_region_init_ram(shadow_ram_e0000, NULL, "m200.shadow-e0000", 0x10000, &error_fatal);
         MemoryRegion *shadow_ram_f0000 = g_new(MemoryRegion, 1);
         memory_region_init_ram(shadow_ram_f0000, NULL, "m200.shadow-f0000", 0x10000, &error_fatal);
+        g_shadow_ram_f0000 = shadow_ram_f0000;
 
         char *filename = qemu_find_file(QEMU_FILE_TYPE_BIOS, machine->firmware);
         if (filename) {
@@ -1172,7 +1183,7 @@ static void m200_init(MachineState *machine)
         ivt[0x1e] = 0xf000efc7; /* F000:EFC7 (Floppy Parameter Table) */
 
         /* Install default stubs in RAM F0000 */
-        uint8_t *f0000_ptr = ram_base + 0xf0000;
+        uint8_t *f0000_ptr = g_shadow_ram_f0000 ? (uint8_t *)memory_region_get_ram_ptr(g_shadow_ram_f0000) : (ram_base + 0xf0000);
         /* F000:FF53 -> iret */
         f0000_ptr[0xff53] = 0xcf;
         /* F000:FF40 -> push %ax; mov $0x20, %al; out %al, $0x20; pop %ax; iret */
