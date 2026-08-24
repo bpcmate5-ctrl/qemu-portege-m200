@@ -816,8 +816,8 @@ static void nv34m_reset(DeviceState *dev)
     /* Initialize VRAM Text Buffer (Planes 0 & 1) and Font (Plane 2) */
     if (s->vga.vram_ptr) {
         for (int k = 0; k < 80 * 25; k++) {
-            s->vga.vram_ptr[k * 4 + 0] = ' ';
-            s->vga.vram_ptr[k * 4 + 1] = 0x07;
+            s->vga.vram_ptr[k * 2 + 0] = ' ';
+            s->vga.vram_ptr[k * 2 + 1] = 0x07;
         }
         for (int c = 0; c < 256; c++) {
             for (int row = 0; row < 16; row++) {
@@ -831,7 +831,7 @@ void nv34m_vga_write_text(int row, int col, uint8_t ch, uint8_t attr)
 {
     if (!global_nv34m_state || !global_nv34m_state->vga.vram_ptr) return;
     if (row < 0 || row >= 25 || col < 0 || col >= 80) return;
-    int idx = (row * 80 + col) * 4;
+    int idx = (row * 80 + col) * 2;
     global_nv34m_state->vga.vram_ptr[idx + 0] = ch;
     global_nv34m_state->vga.vram_ptr[idx + 1] = attr;
     global_nv34m_state->vga.full_update_text = true;
@@ -956,6 +956,16 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
 
     /* ar_index bit 5 enables palette - required for standard text mode rendering */
     vga->ar_index = 0x20;
+    for (int i = 0; i < 16; i++) {
+        vga->ar[i] = i;
+    }
+    static const uint8_t default_vga_palette[16 * 3] = {
+        0x00, 0x00, 0x00,  0x00, 0x00, 0x2a,  0x00, 0x2a, 0x00,  0x00, 0x2a, 0x2a,
+        0x2a, 0x00, 0x00,  0x2a, 0x00, 0x2a,  0x2a, 0x15, 0x00,  0x2a, 0x2a, 0x2a,
+        0x15, 0x15, 0x15,  0x15, 0x15, 0x3f,  0x15, 0x3f, 0x15,  0x15, 0x3f, 0x3f,
+        0x3f, 0x15, 0x15,  0x3f, 0x15, 0x3f,  0x3f, 0x3f, 0x15,  0x3f, 0x3f, 0x3f,
+    };
+    memcpy(vga->palette, default_vga_palette, sizeof(default_vga_palette));
 
     s->ramin_buf = g_malloc0(NV34M_RAMIN_SIZE);
 
