@@ -669,9 +669,11 @@ static uint64_t cmos_ioport_read(void *opaque, hwaddr addr,
     if ((addr & 1) == 0) {
         return 0xff;
     } else {
-        switch(s->cmos_index) {
+        uint8_t idx = s->cmos_index & 0x7f;
+        switch(idx) {
         case RTC_IBM_PS2_CENTURY_BYTE:
-            s->cmos_index = RTC_CENTURY;
+            idx = RTC_CENTURY;
+            s->cmos_index = idx;
             /* fall through */
         case RTC_CENTURY:
         case RTC_SECONDS:
@@ -686,16 +688,16 @@ static uint64_t cmos_ioport_read(void *opaque, hwaddr addr,
             if (rtc_running(s)) {
                 rtc_update_time(s);
             }
-            ret = s->cmos_data[s->cmos_index];
+            ret = s->cmos_data[idx];
             break;
         case RTC_REG_A:
-            ret = s->cmos_data[s->cmos_index];
+            ret = s->cmos_data[idx];
             if (update_in_progress(s)) {
                 ret |= REG_A_UIP;
             }
             break;
         case RTC_REG_C:
-            ret = s->cmos_data[s->cmos_index];
+            ret = s->cmos_data[idx];
             qemu_irq_lower(s->irq);
             s->cmos_data[RTC_REG_C] = 0x00;
             if (ret & (REG_C_UF | REG_C_AF)) {
@@ -716,7 +718,7 @@ static uint64_t cmos_ioport_read(void *opaque, hwaddr addr,
             }
             break;
         default:
-            ret = s->cmos_data[s->cmos_index];
+            ret = s->cmos_data[idx];
             break;
         }
         trace_mc146818_rtc_ioport_read(s->cmos_index, ret);
@@ -962,11 +964,10 @@ static void rtc_reset_enter(Object *obj, ResetType type)
 {
     MC146818RtcState *s = MC146818_RTC(obj);
 
-    /* Reason: VM do suspend self will set 0xfe
-     * Reset any values other than 0xfe(Guest suspend case) */
-    if (s->cmos_data[0x0f] != 0xfe) {
+    /* CMOS 0x0F shutdown status is preserved across resets as on physical PC RTC hardware */
+    /* if (s->cmos_data[0x0f] != 0xfe) {
         s->cmos_data[0x0f] = 0x00;
-    }
+    } */
 
     s->cmos_data[RTC_REG_B] &= ~(REG_B_PIE | REG_B_AIE | REG_B_SQWE);
     s->cmos_data[RTC_REG_C] &= ~(REG_C_UF | REG_C_IRQF | REG_C_PF | REG_C_AF);

@@ -41,6 +41,9 @@ static void i855pm_host_realize(DeviceState *dev, Error **errp)
     I855PMHost *s = I855PM_HOST_DEVICE(dev);
     SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
 
+    fprintf(stderr, "[I855PM REALIZE] s->mch.address_space_io = %p (system_io = %p)\n",
+            s->mch.address_space_io, get_system_io());
+
     memory_region_add_subregion(s->mch.address_space_io,
                                 I855PM_HOST_BRIDGE_CONFIG_ADDR, &pci->conf_mem);
     sysbus_init_ioports(sbd, I855PM_HOST_BRIDGE_CONFIG_ADDR, 4);

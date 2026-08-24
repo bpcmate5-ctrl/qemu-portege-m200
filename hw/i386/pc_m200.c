@@ -16,6 +16,7 @@
 #include "hw/i386/x86.h"
 #include "hw/i386/pc.h"
 #include "hw/i386/apic.h"
+#include "system/reset.h"
 #include "hw/pci-host/i855pm.h"
 #include "hw/southbridge/ich4m.h"
 #include "hw/rtc/mc146818rtc.h"
@@ -828,6 +829,23 @@ static const MemoryRegionOps toshiba_smbus_ops = {
     },
 };
 
+static void pc_m200_reset_handler(void *opaque)
+{
+    X86MachineState *x86ms = opaque;
+    if (x86ms->bios.ram_block) {
+        uint8_t *bios_ptr = memory_region_get_ram_ptr(&x86ms->bios);
+        int bios_size = memory_region_size(&x86ms->bios);
+        if (bios_size >= 0x10) {
+            uint8_t *rv = bios_ptr + bios_size - 0x10;
+            rv[0] = 0xea;
+            rv[1] = 0x1c;
+            rv[2] = 0x29;
+            rv[3] = 0x00;
+            rv[4] = 0xf0; /* ljmp $0xF000, $0x291C */
+        }
+    }
+}
+
 /* Portege M200 hardware initialization */
 static void m200_init(MachineState *machine)
 {
@@ -1072,6 +1090,10 @@ static void m200_init(MachineState *machine)
                 fseek(f, 0, SEEK_SET);
                 if (fread(ram, 1, 0x80000, f) != 0x80000) {}
 
+                /* Preload Module 3 into High SMRAM at 0xFEDA0000 */
+                fseek(f, 0x30000, SEEK_SET);
+                if (fread(memory_region_get_ram_ptr(smram_high), 1, 0x10000, f) == 0x10000) {}
+
                 /* Map full 512KB Flash ROM at Top of 4GB Address Space (0xFFF80000..0xFFFFFFFF) */
                 MemoryRegion *bios_high = g_new(MemoryRegion, 1);
                 memory_region_init_ram(bios_high, NULL, "m200.bios-high", 0x80000, &error_fatal);
@@ -1309,6 +1331,8 @@ static void m200_init(MachineState *machine)
     MemoryRegion *smram_tseg = g_new(MemoryRegion, 1);
     memory_region_init_ram(smram_tseg, NULL, "m200-smram-tseg", 0x100000, &error_fatal);
     memory_region_add_subregion(system_memory, 0xfed00000, smram_tseg);
+
+    qemu_register_reset(pc_m200_reset_handler, x86ms);
 }
 
 static void m200_machine_options(MachineClass *m)
