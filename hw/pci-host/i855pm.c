@@ -177,6 +177,9 @@ static const TypeInfo i855pm_host_info = {
 static void i855pm_agp_realize(PCIDevice *d, Error **errp)
 {
     pci_bridge_initfn(d, TYPE_PCI_BUS);
+    d->config[PCI_PRIMARY_BUS] = 0x00;
+    d->config[PCI_SECONDARY_BUS] = 0x01;
+    d->config[PCI_SUBORDINATE_BUS] = 0x01;
     d->config[PCI_BRIDGE_CONTROL] |= PCI_BRIDGE_CTL_VGA;
 }
 

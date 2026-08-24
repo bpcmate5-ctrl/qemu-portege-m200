@@ -403,6 +403,22 @@ static const MemoryRegionOps toshiba_ivt_ops = {
     },
 };
 
+static void toshiba_port80_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+{
+    fprintf(stderr, "[M200 POST CODE 0x80] 0x%02x (eip=0x%08x)\n", (uint8_t)val, pc_m200_get_cpu_eip());
+}
+
+static uint64_t toshiba_port80_read(void *opaque, hwaddr addr, unsigned size)
+{
+    return 0xff;
+}
+
+static const MemoryRegionOps toshiba_port80_ops = {
+    .read = toshiba_port80_read,
+    .write = toshiba_port80_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
 static void toshiba_vga_set_char(int row, int col, uint8_t ch, uint8_t attr)
 {
     if (row < 0 || row >= 25 || col < 0 || col >= 80) return;
@@ -953,6 +969,8 @@ static void m200_init(MachineState *machine)
         /* Boot sequence: CD-ROM first (0x03), then HDD (0x02), then FDD (0x01) */
         mc146818rtc_set_cmos_data(rtc_s, 0x38, 0x32);
         mc146818rtc_set_cmos_data(rtc_s, 0x3d, 0x20);
+        /* Shutdown status byte: 0x06 = Normal Cold Boot (accessed via port 0x70 bit 7 NMI disable as 0x8F) */
+        mc146818rtc_set_cmos_data(rtc_s, 0x0f, 0x06);
     }
 
     /* USB UHCI & EHCI (D29:F0, F1, F2, F7) */
@@ -1022,18 +1040,11 @@ static void m200_init(MachineState *machine)
     pci_create_simple(agp_bus, PCI_DEVFN(0, 0), TYPE_NV34M_VGA);
     pc_nic_init(pcmc, isa_bus, pcms->pcibus);
 
-    /* Map NVIDIA GeForce FX Go5200 VBIOS at 0x000C0000 */
-    char *vbios_file = qemu_find_file(QEMU_FILE_TYPE_BIOS, "nv34m_vbios.bin");
-    if (vbios_file) {
-        int vbios_size = get_image_size(vbios_file, NULL);
-        if (vbios_size > 0 && vbios_size <= 0x10000) {
-            MemoryRegion *vbios_rom = g_new(MemoryRegion, 1);
-            memory_region_init_ram(vbios_rom, NULL, "m200.vbios", 0x10000, &error_fatal);
-            load_image_size(vbios_file, memory_region_get_ram_ptr(vbios_rom), vbios_size);
-            memory_region_add_subregion_overlap(system_memory, 0xc0000, vbios_rom, 1000);
-        }
-        g_free(vbios_file);
-    }
+    /* Map POST Checkpoint Port 0x80 */
+    MemoryRegion *port80_io = g_new(MemoryRegion, 1);
+    memory_region_init_io(port80_io, OBJECT(machine), &toshiba_port80_ops, NULL,
+                          "toshiba-port80", 1);
+    memory_region_add_subregion_overlap(system_io, 0x80, port80_io, 100);
 
     /* Map 128KB High SMRAM at 0xFEDA0000..0xFEDFFFFF */
     MemoryRegion *smram_high = g_new(MemoryRegion, 1);
@@ -1042,6 +1053,8 @@ static void m200_init(MachineState *machine)
 
     /* Map Toshiba authentic shadow RAM when 512K ROM is loaded */
     if (machine->firmware && (strstr(machine->firmware, "512") || strstr(machine->firmware, "TOSHIBA"))) {
+        MemoryRegion *shadow_ram_c0000 = g_new(MemoryRegion, 1);
+        memory_region_init_ram(shadow_ram_c0000, NULL, "m200.shadow-c0000", 0x10000, &error_fatal);
         MemoryRegion *shadow_ram_e0000 = g_new(MemoryRegion, 1);
         memory_region_init_ram(shadow_ram_e0000, NULL, "m200.shadow-e0000", 0x10000, &error_fatal);
         MemoryRegion *shadow_ram_f0000 = g_new(MemoryRegion, 1);
@@ -1063,6 +1076,10 @@ static void m200_init(MachineState *machine)
                 fseek(f, 0, SEEK_SET);
                 if (fread(memory_region_get_ram_ptr(bios_high), 1, 0x80000, f) == 0x80000) {}
                 memory_region_add_subregion_overlap(system_memory, 0xfff80000, bios_high, 1000);
+
+                /* Preload Module 4 Authentic NVIDIA VBIOS at 0xC0000 */
+                fseek(f, 0x40000, SEEK_SET);
+                if (fread(memory_region_get_ram_ptr(shadow_ram_c0000), 1, 0x10000, f) == 0x10000) {}
 
                 /* Preload Module 3 POST Graphics at 0xE0000 */
                 fseek(f, 0x30000, SEEK_SET);
@@ -1088,37 +1105,18 @@ static void m200_init(MachineState *machine)
                 fseek(f, 0x7de34, SEEK_SET);
                 if (fread(f0000_ptr + 0x1e34, 1, 6, f) == 6) {}
 
-                /* Install Option ROM & POST Splash Stub at 0xF000:2BE0 */
-                /* lcall $0xC000, $0x0003; lcall $0xE000, $0x790F; ljmp $0xF000, $0x2BF0 */
-                f0000_ptr[0x2be0] = 0x9a;
-                f0000_ptr[0x2be1] = 0x03;
-                f0000_ptr[0x2be2] = 0x00;
-                f0000_ptr[0x2be3] = 0x00;
-                f0000_ptr[0x2be4] = 0xc0; /* lcall $0xC000, $0x0003 (Execute NVIDIA VBIOS Option ROM) */
-
-                f0000_ptr[0x2be5] = 0x9a;
-                f0000_ptr[0x2be6] = 0xb0;
-                f0000_ptr[0x2be7] = 0xe4;
-                f0000_ptr[0x2be8] = 0x00;
-                f0000_ptr[0x2be9] = 0xe0; /* lcall $0xE000, $0xE4B0 (Execute Toshiba Display Screen Unblank) */
-
-                f0000_ptr[0x2bea] = 0xea;
-                f0000_ptr[0x2beb] = 0xf0;
-                f0000_ptr[0x2bec] = 0x2b;
-                f0000_ptr[0x2bed] = 0x00;
-                f0000_ptr[0x2bee] = 0xf0; /* ljmp $0xF000, $0x2BF0 (Direct Boot Entry) */
-
-                /* Place authentic System BIOS entry jump at 0x000FFFF0 -> ljmp $0xF000, $0x2BE0 */
+                /* Place authentic System BIOS entry jump at 0x000FFFF0 -> ljmp $0xF000, $0x291C */
                 uint8_t *ptr = (uint8_t *)memory_region_get_ram_ptr(shadow_ram_f0000);
                 ptr[0xfff0] = 0xea;
-                ptr[0xfff1] = 0xe0;
-                ptr[0xfff2] = 0x2b;
+                ptr[0xfff1] = 0x1c;
+                ptr[0xfff2] = 0x29;
                 ptr[0xfff3] = 0x00;
-                ptr[0xfff4] = 0xf0; /* ljmp $0xF000, $0x2BE0 */
+                ptr[0xfff4] = 0xf0; /* ljmp $0xF000, $0x291C (Authentic Module 2 Cold POST Entry) */
                 fclose(f);
             }
             g_free(filename);
         }
+        memory_region_add_subregion_overlap(system_memory, 0xc0000, shadow_ram_c0000, 1000);
         memory_region_add_subregion_overlap(system_memory, 0xe0000, shadow_ram_e0000, 1000);
         memory_region_add_subregion_overlap(system_memory, 0xf0000, shadow_ram_f0000, 1000);
     }
@@ -1256,16 +1254,7 @@ static void m200_init(MachineState *machine)
     toshiba_system_ram = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
     nv34m_set_system_ram(toshiba_system_ram);
 
-    /* Initialize Flat Real Mode (Unreal Mode 4GB Limits) for BIOS decompressors */
-    CPUState *cpu = first_cpu;
-    if (cpu) {
-        X86CPU *x86_cpu = X86_CPU(cpu);
-        CPUX86State *env = &x86_cpu->env;
-        env->segs[R_DS].limit = 0xffffffff;
-        env->segs[R_ES].limit = 0xffffffff;
-        env->segs[R_FS].limit = 0xffffffff;
-        env->segs[R_GS].limit = 0xffffffff;
-    }
+    /* Authentically driven by Toshiba System BIOS GDT and PE transitions */
     uint8_t *ram = toshiba_system_ram;
     *(uint16_t *)(ram + 0x410) = 0x0021; /* Equipment: 80x25 color display, floppy present */
     ram[0x449] = 0x03;                   /* Video mode 03h (80x25 color text) */
