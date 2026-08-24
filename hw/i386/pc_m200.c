@@ -405,7 +405,9 @@ static const MemoryRegionOps toshiba_ivt_ops = {
 
 static void toshiba_port80_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
-    fprintf(stderr, "[M200 POST CODE 0x80] 0x%02x (eip=0x%08x)\n", (uint8_t)val, pc_m200_get_cpu_eip());
+    int64_t t_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    fprintf(stderr, "[M200 POST CODE 0x80] t=%8.3f ms | code=0x%02x (eip=0x%08x)\n",
+            t_ns / 1000000.0, (uint8_t)val, pc_m200_get_cpu_eip());
 }
 
 static uint64_t toshiba_port80_read(void *opaque, hwaddr addr, unsigned size)
@@ -1096,22 +1098,20 @@ static void m200_init(MachineState *machine)
                 fseek(f, 0x20000, SEEK_SET);
                 if (fread(memory_region_get_ram_ptr(shadow_ram_f0000), 1, 0x10000, f) == 0x10000) {}
 
-                uint8_t *f0000_ptr = (uint8_t *)memory_region_get_ram_ptr(shadow_ram_f0000);
-                /* Preload authentic Boot Block GDT Table at 0x000FDE3A */
-                fseek(f, 0x7de3a, SEEK_SET);
-                if (fread(f0000_ptr + 0xde3a, 1, 0x130, f) == 0x130) {}
-
-                /* Preload authentic Boot Block LGDT pseudo-descriptor at 0x000F1E34 */
-                fseek(f, 0x7de34, SEEK_SET);
-                if (fread(f0000_ptr + 0x1e34, 1, 6, f) == 6) {}
-
-                /* Place authentic System BIOS entry jump at 0x000FFFF0 -> ljmp $0xF000, $0x291C */
+                /* Place authentic System BIOS entry jump at 0x000FFFF0 and 0xFFFFFFF0 -> ljmp $0xF000, $0x291C */
                 uint8_t *ptr = (uint8_t *)memory_region_get_ram_ptr(shadow_ram_f0000);
                 ptr[0xfff0] = 0xea;
                 ptr[0xfff1] = 0x1c;
                 ptr[0xfff2] = 0x29;
                 ptr[0xfff3] = 0x00;
                 ptr[0xfff4] = 0xf0; /* ljmp $0xF000, $0x291C (Authentic Module 2 Cold POST Entry) */
+
+                uint8_t *bhigh_ptr = (uint8_t *)memory_region_get_ram_ptr(bios_high);
+                bhigh_ptr[0x7fff0] = 0xea;
+                bhigh_ptr[0x7fff1] = 0x1c;
+                bhigh_ptr[0x7fff2] = 0x29;
+                bhigh_ptr[0x7fff3] = 0x00;
+                bhigh_ptr[0x7fff4] = 0xf0; /* ljmp $0xF000, $0x291C */
                 fclose(f);
             }
             g_free(filename);

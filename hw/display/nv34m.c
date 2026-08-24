@@ -1366,6 +1366,21 @@ static const Property nv34m_properties[] = {
     DEFINE_PROP_BOOL("native-scanout-test", NV34MState, native_scanout_test, false),
 };
 
+static uint32_t nv34m_pci_read_config(PCIDevice *d, uint32_t addr, int len)
+{
+    uint32_t val = pci_default_read_config(d, addr, len);
+    fprintf(stderr, "[NV34M PCI PROBE R] 01:00.0 offset=0x%02x len=%d -> 0x%x (eip=0x%08x)\n",
+            addr, len, val, pc_m200_get_cpu_eip());
+    return val;
+}
+
+static void nv34m_pci_write_config(PCIDevice *d, uint32_t addr, uint32_t val, int len)
+{
+    fprintf(stderr, "[NV34M PCI CFG W] 01:00.0 offset=0x%02x val=0x%x len=%d (eip=0x%08x)\n",
+            addr, val, len, pc_m200_get_cpu_eip());
+    pci_default_write_config(d, addr, val, len);
+}
+
 static void nv34m_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -1373,6 +1388,8 @@ static void nv34m_class_init(ObjectClass *klass, const void *data)
 
     k->realize = nv34m_realize;
     k->exit = nv34m_exit;
+    k->config_read = nv34m_pci_read_config;
+    k->config_write = nv34m_pci_write_config;
     k->romfile = "nv34m_vbios.bin";
     k->vendor_id = PCI_VENDOR_ID_NVIDIA;
     k->device_id = PCI_DEVICE_ID_NVIDIA_GEFORCE_FX_GO5200;

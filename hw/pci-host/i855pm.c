@@ -23,6 +23,7 @@
 #include "hw/pci-host/i855pm.h"
 #include "hw/pci-host/pam.h"
 #include "hw/pci/pci_bridge.h"
+#include "hw/display/nv34m.h"
 #include "hw/intc/ioapic.h"
 #include "hw/core/qdev-properties.h"
 #include "migration/vmstate.h"
@@ -178,9 +179,24 @@ static void i855pm_agp_realize(PCIDevice *d, Error **errp)
 {
     pci_bridge_initfn(d, TYPE_PCI_BUS);
     d->config[PCI_PRIMARY_BUS] = 0x00;
-    d->config[PCI_SECONDARY_BUS] = 0x01;
-    d->config[PCI_SUBORDINATE_BUS] = 0x01;
+    d->config[PCI_SECONDARY_BUS] = 0x00;
+    d->config[PCI_SUBORDINATE_BUS] = 0x00;
     d->config[PCI_BRIDGE_CONTROL] |= PCI_BRIDGE_CTL_VGA;
+}
+
+static void i855pm_agp_write_config(PCIDevice *d, uint32_t addr, uint32_t val, int len)
+{
+    uint8_t old_sec = d->config[PCI_SECONDARY_BUS];
+    pci_bridge_write_config(d, addr, val, len);
+    uint8_t new_sec = d->config[PCI_SECONDARY_BUS];
+
+    if (addr >= 0x18 && addr <= 0x1b) {
+        fprintf(stderr, "[M200 AGP BRIDGE CFG W] 00:01.0 Bus numbers: Primary=%u, Secondary=%u (was %u), Subordinate=%u (eip=0x%08x)\n",
+                d->config[PCI_PRIMARY_BUS], new_sec, old_sec, d->config[PCI_SUBORDINATE_BUS], pc_m200_get_cpu_eip());
+    } else if (addr == 0x04 || addr == 0x3e) {
+        fprintf(stderr, "[M200 AGP BRIDGE CFG W] 00:01.0 CMD=0x%04x, BridgeCtl=0x%04x (eip=0x%08x)\n",
+                pci_get_word(d->config + PCI_COMMAND), pci_get_word(d->config + PCI_BRIDGE_CONTROL), pc_m200_get_cpu_eip());
+    }
 }
 
 static void i855pm_agp_class_init(ObjectClass *klass, const void *data)
@@ -193,7 +209,7 @@ static void i855pm_agp_class_init(ObjectClass *klass, const void *data)
     k->revision = I855PM_AGP_BRIDGE_REVISION_DEFAULT;
     k->class_id = PCI_CLASS_BRIDGE_PCI;
     k->realize = i855pm_agp_realize;
-    k->config_write = pci_bridge_write_config;
+    k->config_write = i855pm_agp_write_config;
     dc->vmsd = &vmstate_pci_device;
     device_class_set_legacy_reset(dc, pci_bridge_reset);
     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
@@ -255,6 +271,8 @@ static void i855pm_mch_write_config(PCIDevice *d,
                                     uint32_t address, uint32_t val, int len)
 {
     I855PMMCHState *mch = I855PM_MCH_DEVICE(d);
+    fprintf(stderr, "[M200 MCH CFG W] 00:00.0 offset=0x%02x val=0x%x len=%d (eip=0x%08x)\n",
+            address, val, len, pc_m200_get_cpu_eip());
 
     pci_default_write_config(d, address, val, len);
 

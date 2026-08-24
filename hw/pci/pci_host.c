@@ -127,6 +127,12 @@ void pci_data_write(PCIBus *s, uint32_t addr, uint32_t val, unsigned len)
 {
     PCIDevice *pci_dev = pci_dev_find_by_addr(s, addr);
     uint32_t config_addr = addr & (PCI_CONFIG_SPACE_SIZE - 1);
+    uint8_t bus_num = addr >> 16;
+    uint8_t devfn = addr >> 8;
+
+    fprintf(stderr, "[PCI CFG W] %02x:%02x.%d offset=0x%02x val=0x%x len=%d (dev=%s)\n",
+            bus_num, PCI_SLOT(devfn), PCI_FUNC(devfn), config_addr, val, len,
+            pci_dev ? pci_dev->name : "NONE");
 
     if (!pci_dev) {
         trace_pci_cfg_write("empty", extract32(addr, 16, 8),
@@ -143,16 +149,26 @@ uint32_t pci_data_read(PCIBus *s, uint32_t addr, unsigned len)
 {
     PCIDevice *pci_dev = pci_dev_find_by_addr(s, addr);
     uint32_t config_addr = addr & (PCI_CONFIG_SPACE_SIZE - 1);
+    uint8_t bus_num = addr >> 16;
+    uint8_t devfn = addr >> 8;
+
+    uint32_t val = ~0x0;
+    if (pci_dev) {
+        val = pci_host_config_read_common(pci_dev, config_addr,
+                                          PCI_CONFIG_SPACE_SIZE, len);
+    }
+
+    fprintf(stderr, "[PCI CFG R] %02x:%02x.%d offset=0x%02x len=%d -> 0x%x (dev=%s)\n",
+            bus_num, PCI_SLOT(devfn), PCI_FUNC(devfn), config_addr, len, val,
+            pci_dev ? pci_dev->name : "NONE");
 
     if (!pci_dev) {
         trace_pci_cfg_read("empty", extract32(addr, 16, 8),
                            extract32(addr, 11, 5), extract32(addr, 8, 3),
                            config_addr, ~0x0);
-        return ~0x0;
     }
 
-    return pci_host_config_read_common(pci_dev, config_addr,
-                                       PCI_CONFIG_SPACE_SIZE, len);
+    return val;
 }
 
 static void pci_host_config_write(void *opaque, hwaddr addr,
