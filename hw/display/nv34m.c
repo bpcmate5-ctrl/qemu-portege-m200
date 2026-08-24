@@ -225,17 +225,52 @@ static void nv34m_update_irq(NV34MState *s)
     pci_set_irq(&s->dev, s->irq_level ? 1 : 0);
 }
 
-static void nv34m_decode_pll(const char *name, uint32_t val)
+static void nv34m_decode_pll_two_stage(int head, const char *name, uint32_t s1_val, uint32_t s2_val)
 {
-    uint32_t m = val & 0xFF;
-    uint32_t n = (val >> 8) & 0xFF;
-    uint32_t p = (val >> 16) & 0x07;
-    if (m > 0) {
-        /* NV34 Reference Clock is 27.0 MHz (27000 kHz) */
-        double f_out = (27.0 * n) / (m * (1 << p));
-        fprintf(stderr, "[NV34M PLL DECODE] %s: M=%u, N=%u, P=%u (raw=0x%08x) -> F_OUT=%.3f MHz\n",
-                name, m, n, p, val, f_out);
+    uint32_t m1 = s1_val & 0xFF;
+    uint32_t n1 = (s1_val >> 8) & 0xFF;
+    uint32_t p1 = (s1_val >> 16) & 0x07;
+
+    uint32_t m2 = s2_val & 0xFF;
+    uint32_t n2 = (s2_val >> 8) & 0xFF;
+    uint32_t p2 = (s2_val >> 16) & 0x07;
+
+    if (m1 > 0) {
+        /* Reference clock is 27.0 MHz */
+        double f_s1 = (27.0 * n1) / (m1 * (1 << p1));
+        if (m2 > 0 && n2 > 0) {
+            double f_out = (f_s1 * n2) / (m2 * (1 << p2));
+            fprintf(stderr, "[NV34M 2-STAGE PLL DECODE Head%d] %s: S1(M1=%u, N1=%u, P1=%u -> %.3f MHz), S2(M2=%u, N2=%u, P2=%u) -> F_OUT=%.3f MHz\n",
+                    head, name, m1, n1, p1, f_s1, m2, n2, p2, f_out);
+        } else {
+            fprintf(stderr, "[NV34M PLL DECODE Head%d] %s: M=%u, N=%u, P=%u (raw=0x%08x) -> F_OUT=%.3f MHz\n",
+                    head, name, m1, n1, p1, s1_val, f_s1);
+        }
     }
+}
+
+static void nv34m_decode_fp(int head, uint32_t off, uint32_t val)
+{
+    const char *reg_name = NULL;
+    switch (off) {
+    case 0x800: reg_name = "FP_VDISPLAY_END"; break;
+    case 0x804: reg_name = "FP_VTOTAL"; break;
+    case 0x808: reg_name = "FP_VCRTC"; break;
+    case 0x80c: reg_name = "FP_VSYNC_START"; break;
+    case 0x810: reg_name = "FP_VSYNC_END"; break;
+    case 0x820: reg_name = "FP_HDISPLAY_END"; break;
+    case 0x824: reg_name = "FP_HTOTAL"; break;
+    case 0x828: reg_name = "FP_HCRTC"; break;
+    case 0x82c: reg_name = "FP_HSYNC_START"; break;
+    case 0x830: reg_name = "FP_HSYNC_END"; break;
+    case 0x848: reg_name = "FP_TG_CTRL"; break;
+    case 0x880: reg_name = "FP_DEBUG_0"; break;
+    case 0x8b0: reg_name = "FP_TMDS_CTRL"; break;
+    case 0x8b4: reg_name = "FP_TMDS_DATA"; break;
+    default:    reg_name = "FP_OTHER"; break;
+    }
+    fprintf(stderr, "[NV34M FP TIMING Head%d] %s (0x%04x) = 0x%08x (%u dec)\n",
+            head, reg_name, off, val, val);
 }
 
 static inline uint32_t nv34m_get_cpu_eip(void)
@@ -579,10 +614,19 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
         uint32_t off = addr - 0x680000;
         uint32_t idx = off >> 2;
         if (idx < ARRAY_SIZE(s->pramdac[0].regs)) s->pramdac[0].regs[idx] = val;
-        if (off == 0x500) nv34m_decode_pll("Head0 NVPLL (Core)", val);
-        else if (off == 0x504) nv34m_decode_pll("Head0 MPLL (Memory)", val);
-        else if (off == 0x508) nv34m_decode_pll("Head0 VPLL (Pixel Clock)", val);
-        else if (off == 0x520) nv34m_decode_pll("Head0 VPLL2", val);
+        if (off == 0x500 || off == 0x570)
+            nv34m_decode_pll_two_stage(0, "NVPLL (Core)", PRAMDAC_REG(s, 0, 0x500), PRAMDAC_REG(s, 0, 0x570));
+        else if (off == 0x504 || off == 0x574)
+            nv34m_decode_pll_two_stage(0, "MPLL (Memory)", PRAMDAC_REG(s, 0, 0x504), PRAMDAC_REG(s, 0, 0x574));
+        else if (off == 0x508 || off == 0x578)
+            nv34m_decode_pll_two_stage(0, "VPLL (Pixel Clock)", PRAMDAC_REG(s, 0, 0x508), PRAMDAC_REG(s, 0, 0x578));
+        else if (off == 0x520 || off == 0x57c)
+            nv34m_decode_pll_two_stage(0, "VPLL2", PRAMDAC_REG(s, 0, 0x520), PRAMDAC_REG(s, 0, 0x57c));
+        else if (off == 0x524)
+            fprintf(stderr, "[NV34M CLK SEL Head0] SEL_CLK (0x680524) = 0x%08"PRIx64" (eip=0x%08x)\n", val, eip);
+        else if (off >= 0x800 && off <= 0x8ff)
+            nv34m_decode_fp(0, off, (uint32_t)val);
+
         const char *sub = (off >= 0x300 && off <= 0x33f) ? "CURSOR" :
                           (off >= 0x500 && off <= 0x5ff) ? "PLL" :
                           (off >= 0x600 && off <= 0x7ff) ? "GENERAL" :
@@ -605,10 +649,19 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
         uint32_t off = addr - 0x682000;
         uint32_t idx = off >> 2;
         if (idx < ARRAY_SIZE(s->pramdac[1].regs)) s->pramdac[1].regs[idx] = val;
-        if (off == 0x500) nv34m_decode_pll("Head1 NVPLL (Core)", val);
-        else if (off == 0x504) nv34m_decode_pll("Head1 MPLL (Memory)", val);
-        else if (off == 0x508) nv34m_decode_pll("Head1 VPLL (Pixel Clock)", val);
-        else if (off == 0x520) nv34m_decode_pll("Head1 VPLL2", val);
+        if (off == 0x500 || off == 0x570)
+            nv34m_decode_pll_two_stage(1, "NVPLL (Core)", PRAMDAC_REG(s, 1, 0x500), PRAMDAC_REG(s, 1, 0x570));
+        else if (off == 0x504 || off == 0x574)
+            nv34m_decode_pll_two_stage(1, "MPLL (Memory)", PRAMDAC_REG(s, 1, 0x504), PRAMDAC_REG(s, 1, 0x574));
+        else if (off == 0x508 || off == 0x578)
+            nv34m_decode_pll_two_stage(1, "VPLL (Pixel Clock)", PRAMDAC_REG(s, 1, 0x508), PRAMDAC_REG(s, 1, 0x578));
+        else if (off == 0x520 || off == 0x57c)
+            nv34m_decode_pll_two_stage(1, "VPLL2", PRAMDAC_REG(s, 1, 0x520), PRAMDAC_REG(s, 1, 0x57c));
+        else if (off == 0x524)
+            fprintf(stderr, "[NV34M CLK SEL Head1] SEL_CLK (0x682524) = 0x%08"PRIx64" (eip=0x%08x)\n", val, eip);
+        else if (off >= 0x800 && off <= 0x8ff)
+            nv34m_decode_fp(1, off, (uint32_t)val);
+
         const char *sub = (off >= 0x300 && off <= 0x33f) ? "CURSOR" :
                           (off >= 0x500 && off <= 0x5ff) ? "PLL" :
                           (off >= 0x600 && off <= 0x7ff) ? "GENERAL" :
