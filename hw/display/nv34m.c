@@ -914,6 +914,8 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
 
     vga_init(vga, OBJECT(dev), pci_address_space(dev), pci_address_space_io(dev), true);
 
+    vga->con = graphic_console_init(DEVICE(dev), 0, s->default_hw_ops, vga);
+
     /* Initialize Display Timing State (1400x1050 @ 60.0197 Hz Native Panel) */
     s->frame_period_ns = NV34M_NATIVE_FRAME_PERIOD_NS;
     s->pixel_clock_hz = NV34M_NATIVE_PANEL_PIXEL_CLOCK;
