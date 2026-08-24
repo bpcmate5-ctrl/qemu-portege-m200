@@ -247,32 +247,7 @@ static const MemoryRegionOps toshiba_acpi_pm_ops = {
     },
 };
 
-/* Toshiba Super I/O & Serial Status Port 0x1E0..0x1E7 */
-static uint64_t toshiba_sio_1e0_read(void *opaque, hwaddr addr, unsigned size)
-{
-    switch (addr) {
-    case 5: /* Line Status Register (LSR) */
-        return 0x60; /* THRE | TEMT (Transmitter Empty & Ready) */
-    case 6: /* Modem Status Register (MSR) */
-        return 0xb0; /* DSR | CTS | CD */
-    default:
-        return 0x00;
-    }
-}
 
-static void toshiba_sio_1e0_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
-{
-}
-
-static const MemoryRegionOps toshiba_sio_1e0_ops = {
-    .read = toshiba_sio_1e0_read,
-    .write = toshiba_sio_1e0_write,
-    .endianness = DEVICE_LITTLE_ENDIAN,
-    .impl = {
-        .min_access_size = 1,
-        .max_access_size = 4,
-    },
-};
 
 static uint64_t toshiba_lcd_d800_read(void *opaque, hwaddr addr, unsigned size)
 {
@@ -1091,10 +1066,11 @@ static void m200_init(MachineState *machine)
                           "m200-vga-int10", 2);
     memory_region_add_subregion_overlap(system_io, 0x180, vga_int10_io, 100);
 
-    /* Map Toshiba Super I/O / Serial Status Port (0x1E0..0x1E7) */
+    /* Map Toshiba Hardware Debug Port (PJ2000 on Ports 0x1E0..0x1E7) */
+    ToshibaDPortState *dport = g_new0(ToshibaDPortState, 1);
     MemoryRegion *sio_1e0_mr = g_new(MemoryRegion, 1);
-    memory_region_init_io(sio_1e0_mr, OBJECT(machine), &toshiba_sio_1e0_ops, NULL,
-                          "toshiba-sio-1e0", 8);
+    memory_region_init_io(sio_1e0_mr, OBJECT(machine), &toshiba_dport_ops, dport,
+                          "toshiba-dport", 8);
     memory_region_add_subregion_overlap(system_io, 0x1e0, sio_1e0_mr, 100);
 
     /* Map Intel ICH4-M APM / Toshiba SMI Control Port (0xB2/0xB3) */
@@ -1252,11 +1228,6 @@ static void m200_init(MachineState *machine)
     memory_region_add_subregion(system_io, 0x62, acpi_ec_data);
     memory_region_add_subregion(system_io, 0x66, acpi_ec_cmd);
 
-    /* Toshiba Hardware Debug Port (PJ2000 on Ports 0x1E0..0x1E7) */
-    ToshibaDPortState *dport = g_new0(ToshibaDPortState, 1);
-    MemoryRegion *dport_io = g_new(MemoryRegion, 1);
-    memory_region_init_io(dport_io, OBJECT(machine), &toshiba_dport_ops, dport, "toshiba-dport", 8);
-    memory_region_add_subregion(system_io, 0x1e0, dport_io);
 
     /* Intel ICH4-M ACPI Power Management Timer (Base 0xD800, Timer at 0xD808) */
     MemoryRegion *acpi_pm = g_new(MemoryRegion, 1);
