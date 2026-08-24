@@ -1053,13 +1053,27 @@ static void m200_init(MachineState *machine)
             FILE *f = fopen(filename, "rb");
             if (f) {
                 uint8_t *ram = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
-                /* Preload full 512KB ROM into RAM */
+                /* Preload full 512KB ROM into low RAM */
                 fseek(f, 0, SEEK_SET);
                 if (fread(ram, 1, 0x80000, f) != 0x80000) {}
 
+                /* Map full 512KB Flash ROM at Top of 4GB Address Space (0xFFF80000..0xFFFFFFFF) */
+                MemoryRegion *bios_high = g_new(MemoryRegion, 1);
+                memory_region_init_ram(bios_high, NULL, "m200.bios-high", 0x80000, &error_fatal);
+                fseek(f, 0, SEEK_SET);
+                if (fread(memory_region_get_ram_ptr(bios_high), 1, 0x80000, f) == 0x80000) {}
+                memory_region_add_subregion_overlap(system_memory, 0xfff80000, bios_high, 1000);
+
                 /* Preload Module 3 POST Graphics at 0xE0000 */
                 fseek(f, 0x30000, SEEK_SET);
-                if (fread(memory_region_get_ram_ptr(shadow_ram_e0000), 1, 0x10000, f) == 0x10000) {}
+                if (fread(memory_region_get_ram_ptr(shadow_ram_e0000), 1, 0x10000, f) == 0x10000) {
+                    uint8_t *e0000_ptr = (uint8_t *)memory_region_get_ram_ptr(shadow_ram_e0000);
+                    uint8_t sum = 0;
+                    for (int k = 0; k < 0x8000; k++) {
+                        sum += e0000_ptr[k];
+                    }
+                    e0000_ptr[0x7fff] -= sum;
+                }
 
                 /* Preload Module 2 System BIOS into 0xF0000 */
                 fseek(f, 0x20000, SEEK_SET);
@@ -1074,18 +1088,25 @@ static void m200_init(MachineState *machine)
                 fseek(f, 0x7de34, SEEK_SET);
                 if (fread(f0000_ptr + 0x1e34, 1, 6, f) == 6) {}
 
-                /* Install Option ROM Initialization Stub at 0xF000:2BE0 */
-                /* lcall $0xC000, $0x0003; ljmp $0xF000, $0x2BF0 */
+                /* Install Option ROM & POST Splash Stub at 0xF000:2BE0 */
+                /* lcall $0xC000, $0x0003; lcall $0xE000, $0x790F; ljmp $0xF000, $0x2BF0 */
                 f0000_ptr[0x2be0] = 0x9a;
                 f0000_ptr[0x2be1] = 0x03;
                 f0000_ptr[0x2be2] = 0x00;
                 f0000_ptr[0x2be3] = 0x00;
                 f0000_ptr[0x2be4] = 0xc0; /* lcall $0xC000, $0x0003 (Execute NVIDIA VBIOS Option ROM) */
-                f0000_ptr[0x2be5] = 0xea;
-                f0000_ptr[0x2be6] = 0xf0;
-                f0000_ptr[0x2be7] = 0x2b;
+
+                f0000_ptr[0x2be5] = 0x9a;
+                f0000_ptr[0x2be6] = 0x0f;
+                f0000_ptr[0x2be7] = 0x79;
                 f0000_ptr[0x2be8] = 0x00;
-                f0000_ptr[0x2be9] = 0xf0; /* ljmp $0xF000, $0x2BF0 (Direct Boot Entry) */
+                f0000_ptr[0x2be9] = 0xe0; /* lcall $0xE000, $0x790F (Execute Toshiba Module 3 POST Splash) */
+
+                f0000_ptr[0x2bea] = 0xea;
+                f0000_ptr[0x2beb] = 0xf0;
+                f0000_ptr[0x2bec] = 0x2b;
+                f0000_ptr[0x2bed] = 0x00;
+                f0000_ptr[0x2bee] = 0xf0; /* ljmp $0xF000, $0x2BF0 (Direct Boot Entry) */
 
                 /* Place authentic System BIOS entry jump at 0x000FFFF0 -> ljmp $0xF000, $0x2BE0 */
                 uint8_t *ptr = (uint8_t *)memory_region_get_ram_ptr(shadow_ram_f0000);

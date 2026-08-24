@@ -28,6 +28,8 @@ void nv34m_vga_sync_ram_buffer(const uint8_t *ram);
 void nv34m_set_system_ram(uint8_t *ram);
 void nv34m_log_vga_mem_write(hwaddr addr, unsigned size);
 void nv34m_log_vga_ioport_write(uint32_t addr, uint32_t val);
+void nv34m_log_vga_ioport_read(uint32_t addr, uint32_t val);
+void nv34m_dump_vga_state_snapshot(const char *reason);
 uint32_t pc_m200_get_cpu_eip(void);
 
 #endif

@@ -414,6 +414,7 @@ uint32_t vga_ioport_read(void *opaque, uint32_t addr)
         }
     }
     trace_vga_std_read_io(addr, val);
+    nv34m_log_vga_ioport_read(addr, val);
     return val;
 }
 

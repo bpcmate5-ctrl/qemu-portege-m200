@@ -1039,43 +1039,142 @@ void nv34m_set_system_ram(uint8_t *ram)
     nv34m_ram_ptr = ram;
 }
 
+static uint8_t ar_flip_flop = 0;
+static uint8_t ar_index = 0;
+static uint8_t dac_write_index = 0;
+static uint8_t dac_rgb_state = 0; /* 0=R, 1=G, 2=B */
+static uint8_t dac_cur_r = 0, dac_cur_g = 0;
+static uint8_t seq_idx = 0;
+static uint8_t gc_idx = 0;
+static uint8_t crtc_idx = 0;
+
+void nv34m_dump_vga_state_snapshot(const char *reason)
+{
+    if (!global_nv34m_state) return;
+    VGACommonState *vga = &global_nv34m_state->vga;
+    uint32_t eip = nv34m_get_cpu_eip();
+
+    fprintf(stderr, "\n======================================================\n");
+    fprintf(stderr, "=== FULL VGA STATE SNAPSHOT [%s] ===\n", reason);
+    fprintf(stderr, "=== EIP = 0x%08x | Mode: %s (graphic_mode=%d) ===\n",
+            eip, vga->graphic_mode ? "GRAPHIC" : "TEXT", vga->graphic_mode);
+    fprintf(stderr, "MISC Output: 0x%02x\n", vga->msr);
+    fprintf(stderr, "SEQ:  00=%02x 01=%02x 02(MapMask)=%02x 03=%02x 04(MemMode)=%02x\n",
+            vga->sr[0], vga->sr[1], vga->sr[2], vga->sr[3], vga->sr[4]);
+    fprintf(stderr, "GC:   00(SetReset)=%02x 01(EnSetReset)=%02x 02(ColorComp)=%02x 03(DataRotate)=%02x\n"
+                    "      04(ReadMapSel)=%02x 05(Mode)=%02x 06(Misc)=%02x 07(ColorDontCare)=%02x 08(BitMask)=%02x\n",
+            vga->gr[0], vga->gr[1], vga->gr[2], vga->gr[3],
+            vga->gr[4], vga->gr[5], vga->gr[6], vga->gr[7], vga->gr[8]);
+    fprintf(stderr, "CRTC: 00..07: %02x %02x %02x %02x %02x %02x %02x %02x\n"
+                    "      08..0F: %02x %02x %02x %02x %02x %02x %02x %02x\n"
+                    "      10..18: %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+            vga->cr[0], vga->cr[1], vga->cr[2], vga->cr[3], vga->cr[4], vga->cr[5], vga->cr[6], vga->cr[7],
+            vga->cr[8], vga->cr[9], vga->cr[10], vga->cr[11], vga->cr[12], vga->cr[13], vga->cr[14], vga->cr[15],
+            vga->cr[16], vga->cr[17], vga->cr[18], vga->cr[19], vga->cr[20], vga->cr[21], vga->cr[22], vga->cr[23], vga->cr[24]);
+    fprintf(stderr, "ATTR: 00..0F(Palette): %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n"
+                    "      10(Mode)=%02x 11(Overscan)=%02x 12(PlaneEn)=%02x 13(PELPan)=%02x 14(ColorSel)=%02x\n",
+            vga->ar[0], vga->ar[1], vga->ar[2], vga->ar[3], vga->ar[4], vga->ar[5], vga->ar[6], vga->ar[7],
+            vga->ar[8], vga->ar[9], vga->ar[10], vga->ar[11], vga->ar[12], vga->ar[13], vga->ar[14], vga->ar[15],
+            vga->ar[16], vga->ar[17], vga->ar[18], vga->ar[19], vga->ar[20]);
+    fprintf(stderr, "======================================================\n\n");
+}
+
 void nv34m_log_vga_mem_write(hwaddr addr, unsigned size)
 {
     if (!global_nv34m_state) return;
     if (addr < 0x10000) {
+        if (global_nv34m_state->count_a0000_writes == 0) {
+            nv34m_dump_vga_state_snapshot("FIRST A0000 WRITE");
+        }
         global_nv34m_state->count_a0000_writes++;
     } else if (addr >= 0x18000) {
+        if (global_nv34m_state->count_b8000_writes == 0) {
+            nv34m_dump_vga_state_snapshot("FIRST B8000 WRITE");
+        }
         global_nv34m_state->count_b8000_writes++;
+    }
+}
+
+void nv34m_log_vga_ioport_read(uint32_t addr, uint32_t val)
+{
+    if (addr == 0x3da || addr == 0x3ba) {
+        ar_flip_flop = 0;
     }
 }
 
 void nv34m_log_vga_ioport_write(uint32_t addr, uint32_t val)
 {
-    static uint32_t seq_idx = 0;
-    static uint32_t gc_idx = 0;
-    static uint32_t crtc_idx = 0;
-
     switch (addr) {
-    case 0x3c4: seq_idx = val & 0x1f; break;
+    case 0x3c2:
+        fprintf(stderr, "[VGA MISC W] val=0x%02x (clk=%u, io_addr=%s, ram_en=%u)\n",
+                val, (val >> 2) & 3, (val & 1) ? "0x3Dx" : "0x3Bx", (val >> 1) & 1);
+        break;
+
+    /* Sequencer */
+    case 0x3c4:
+        seq_idx = val & 0x1f;
+        break;
     case 0x3c5:
-        if (seq_idx == 0x02 || seq_idx == 0x04) {
-            fprintf(stderr, "[VGA SEQ W] index=0x%02x val=0x%02x (MapMask / MemMode)\n", seq_idx, val);
-        }
+        fprintf(stderr, "[VGA SEQ W] index=0x%02x val=0x%02x\n", seq_idx, val);
         break;
-    case 0x3ce: gc_idx = val & 0x0f; break;
+
+    /* Graphics Controller */
+    case 0x3ce:
+        gc_idx = val & 0x0f;
+        break;
     case 0x3cf:
-        if (gc_idx <= 0x08) {
-            fprintf(stderr, "[VGA GC W] index=0x%02x val=0x%02x\n", gc_idx, val);
-        }
+        fprintf(stderr, "[VGA GC W] index=0x%02x val=0x%02x\n", gc_idx, val);
         break;
-    case 0x3d4: crtc_idx = val & 0x7f; break;
+
+    /* CRTC */
+    case 0x3d4:
+    case 0x3b4:
+        crtc_idx = val & 0x7f;
+        break;
     case 0x3d5:
-        if (crtc_idx == 0x09 || crtc_idx == 0x14 || crtc_idx == 0x17) {
-            fprintf(stderr, "[VGA CRTC W] index=0x%02x val=0x%02x\n", crtc_idx, val);
+    case 0x3b5:
+        fprintf(stderr, "[VGA CRTC W] index=0x%02x val=0x%02x\n", crtc_idx, val);
+        break;
+
+    /* Attribute Controller */
+    case 0x3c0:
+        if (ar_flip_flop == 0) {
+            ar_index = val & 0x1f;
+            uint8_t video_en = (val >> 5) & 1;
+            fprintf(stderr, "[VGA ATTR INDEX] index=0x%02x (VideoEn=%u)\n", ar_index, video_en);
+            ar_flip_flop = 1;
+        } else {
+            fprintf(stderr, "[VGA ATTR DATA] index=0x%02x val=0x%02x\n", ar_index, val);
+            ar_flip_flop = 0;
         }
         break;
-    case 0x3c0:
-        fprintf(stderr, "[VGA ATTR W] val=0x%02x\n", val);
+
+    /* DAC */
+    case 0x3c6:
+        fprintf(stderr, "[VGA DAC MASK] val=0x%02x\n", val);
+        break;
+    case 0x3c7:
+        break;
+    case 0x3c8:
+        dac_write_index = val;
+        dac_rgb_state = 0;
+        break;
+    case 0x3c9:
+        if (dac_rgb_state == 0) {
+            dac_cur_r = val;
+            dac_rgb_state = 1;
+        } else if (dac_rgb_state == 1) {
+            dac_cur_g = val;
+            dac_rgb_state = 2;
+        } else {
+            uint8_t dac_cur_b = val;
+            if (dac_write_index < 16) {
+                fprintf(stderr, "[VGA DAC PALETTE] idx=%2u -> R=0x%02x G=0x%02x B=0x%02x\n",
+                        dac_write_index, dac_cur_r, dac_cur_g, dac_cur_b);
+            }
+            dac_write_index++;
+            dac_rgb_state = 0;
+        }
         break;
     }
 }
