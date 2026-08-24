@@ -1097,10 +1097,10 @@ static void m200_init(MachineState *machine)
                 f0000_ptr[0x2be4] = 0xc0; /* lcall $0xC000, $0x0003 (Execute NVIDIA VBIOS Option ROM) */
 
                 f0000_ptr[0x2be5] = 0x9a;
-                f0000_ptr[0x2be6] = 0x0f;
-                f0000_ptr[0x2be7] = 0x79;
+                f0000_ptr[0x2be6] = 0xb0;
+                f0000_ptr[0x2be7] = 0xe4;
                 f0000_ptr[0x2be8] = 0x00;
-                f0000_ptr[0x2be9] = 0xe0; /* lcall $0xE000, $0x790F (Execute Toshiba Module 3 POST Splash) */
+                f0000_ptr[0x2be9] = 0xe0; /* lcall $0xE000, $0xE4B0 (Execute Toshiba Display Screen Unblank) */
 
                 f0000_ptr[0x2bea] = 0xea;
                 f0000_ptr[0x2beb] = 0xf0;
@@ -1252,12 +1252,20 @@ static void m200_init(MachineState *machine)
         f0000_ptr[0xf004] = 0xcf;
     }
 
-    /* Place safety IRET at 0x00000000 so any jumps to 0x0000:0000 return cleanly */
-    *(uint8_t *)memory_region_get_ram_ptr(machine->ram) = 0xcf;
-
     /* Initialize BDA Video Variables (0x0040:0x0049..0x0089) for VGA Color Display */
     toshiba_system_ram = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
     nv34m_set_system_ram(toshiba_system_ram);
+
+    /* Initialize Flat Real Mode (Unreal Mode 4GB Limits) for BIOS decompressors */
+    CPUState *cpu = first_cpu;
+    if (cpu) {
+        X86CPU *x86_cpu = X86_CPU(cpu);
+        CPUX86State *env = &x86_cpu->env;
+        env->segs[R_DS].limit = 0xffffffff;
+        env->segs[R_ES].limit = 0xffffffff;
+        env->segs[R_FS].limit = 0xffffffff;
+        env->segs[R_GS].limit = 0xffffffff;
+    }
     uint8_t *ram = toshiba_system_ram;
     *(uint16_t *)(ram + 0x410) = 0x0021; /* Equipment: 80x25 color display, floppy present */
     ram[0x449] = 0x03;                   /* Video mode 03h (80x25 color text) */
