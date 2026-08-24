@@ -38,32 +38,69 @@
 #define NV34M_VRAM_SIZE   (32 * MiB)
 #define NV34M_RAMIN_SIZE  (1 * MiB)
 
-/* NV34 Register Offsets */
+/* =========================================================================
+ * NV34 Register Definitions (Categorized by Engine Block)
+ * ========================================================================= */
+
+/* PMC (Master Control) 0x000000..0x000FFF */
 #define NV_PMC_BOOT_0             0x000000
 #define NV_PMC_BOOT_1             0x000004
 #define NV_PMC_INTR_0             0x000100
 #define NV_PMC_INTR_EN_0          0x000140
 #define NV_PMC_ENABLE             0x000200
 
+/* PBUS (PCI / Bus Interface) 0x001000..0x001FFF */
+#define NV_PBUS_DEBUG_0           0x001080
+#define NV_PBUS_DEBUG_1           0x001084
+#define NV_PBUS_PCI_NV_0          0x001800
+#define NV_PBUS_PCI_NV_1          0x001804
+
+/* PTIMER (Timer & Timebase) 0x009000..0x009FFF */
 #define NV_PTIMER_TIME_0          0x009400
 #define NV_PTIMER_TIME_1          0x009410
 #define NV_PTIMER_NUMERATOR       0x009420
 #define NV_PTIMER_DENOMINATOR     0x009424
 
-#define NV_PBUS_PCI_NV_0          0x001800
-#define NV_PBUS_PCI_NV_1          0x001804
-#define NV_PBUS_DEBUG_1           0x001084
+/* PFB (Memory Controller & Framebuffer) 0x100000..0x100FFF */
+#define NV_PFB_CFG0               0x100080
+#define NV_PFB_CFG1               0x100084
+#define NV_PFB_CSTATUS            0x100100
+#define NV_PFB_TIMING0            0x100200
+#define NV_PFB_TIMING1            0x100204
+#define NV_PFB_TIMING2            0x100208
+#define NV_PFB_RAM_AMOUNT         0x10020C
+#define NV_PFB_REFRESH            0x100210
+#define NV_PFB_RAM_CFG            0x100220
+#define NV_PFB_WBC                0x100400
+
+/* PSTRAPS (Hardware Straps) 0x101000 */
 #define NV_PSTRAPS                0x101000
 
+/* PCRTC / PVIO (VGA Shadow Registers) 0x601000..0x603FFF */
 #define NV_PRMCIO_INP0__COLOR     0x6013da
-#define NV_PRAMDAC_FP_TG_CONTROL  0x680800
-#define NV_PRAMDAC_FP_DEBUG_0     0x680880
+
+/* PRAMDAC / PDISPLAY (Display Head 0/1, Flat Panel, PLLs) 0x680000..0x680FFF */
 #define NV_PRAMDAC_GENERAL        0x680500
-#define NV_PRAMDAC_GENERAL_CONTROL 0x680600
 #define NV_PRAMDAC_VPLL           0x680508
 #define NV_PRAMDAC_MPLL           0x68050c
+#define NV_PRAMDAC_GENERAL_CONTROL 0x680600
+#define NV_PRAMDAC_FP_TG_CONTROL  0x680800
+#define NV_PRAMDAC_FP_DEBUG_0     0x680880
 
 OBJECT_DECLARE_SIMPLE_TYPE(NV34MState, NV34M_VGA)
+
+typedef struct NVPFBState {
+    uint32_t cfg0;
+    uint32_t cfg1;
+    uint32_t cstatus;
+    uint32_t timing0;
+    uint32_t timing1;
+    uint32_t timing2;
+    uint32_t ram_amount;
+    uint32_t refresh;
+    uint32_t ram_cfg;
+    uint32_t wbc;
+} NVPFBState;
 
 struct NV34MState {
     PCIDevice dev;
@@ -72,19 +109,26 @@ struct NV34MState {
     MemoryRegion mmio;
     MemoryRegion ramin;
 
-    /* NV34 Registers */
+    /* PMC Registers */
     uint32_t pmc_boot_0;
     uint32_t pmc_boot_1;
     uint32_t pmc_intr_0;
     uint32_t pmc_intr_en_0;
     uint32_t pmc_enable;
 
+    /* PTIMER Registers */
     uint32_t ptimer_numerator;
     uint32_t ptimer_denominator;
 
+    /* PBUS / Straps */
+    uint32_t pbus_debug_0;
     uint32_t pbus_debug_1;
     uint32_t pstraps;
 
+    /* PFB (Memory Controller) */
+    NVPFBState pfb;
+
+    /* PRAMDAC / Display Registers */
     uint32_t pramdac_general;
     uint32_t pramdac_vpll;
     uint32_t pramdac_mpll;
@@ -102,23 +146,14 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
     uint32_t val = 0;
 
     switch (addr) {
-    case NV_PMC_BOOT_0:
-        val = s->pmc_boot_0;
-        break;
-    case NV_PMC_BOOT_1:
-        val = s->pmc_boot_1;
-        break;
-    case NV_PMC_INTR_0:
-        val = s->pmc_intr_0;
-        break;
-    case NV_PMC_INTR_EN_0:
-        val = s->pmc_intr_en_0;
-        break;
-    case NV_PMC_ENABLE:
-        val = s->pmc_enable;
-        break;
+    /* PMC (0x000000..0x000FFF) */
+    case NV_PMC_BOOT_0:   val = s->pmc_boot_0; break;
+    case NV_PMC_BOOT_1:   val = s->pmc_boot_1; break;
+    case NV_PMC_INTR_0:   val = s->pmc_intr_0; break;
+    case NV_PMC_INTR_EN_0:val = s->pmc_intr_en_0; break;
+    case NV_PMC_ENABLE:   val = s->pmc_enable; break;
 
-    /* PTIMER */
+    /* PTIMER (0x009000..0x009FFF) */
     case NV_PTIMER_TIME_0:
         val = (uint32_t)qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
         break;
@@ -132,25 +167,69 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
         val = s->ptimer_denominator ? s->ptimer_denominator : 1;
         break;
 
-    /* PBUS / Straps */
+    /* PBUS (0x001000..0x001FFF) */
+    case NV_PBUS_DEBUG_0:
+        val = s->pbus_debug_0;
+        break;
+    case NV_PBUS_DEBUG_1:
+        val = s->pbus_debug_1;
+        break;
     case NV_PBUS_PCI_NV_0:
         val = (PCI_DEVICE_ID_NVIDIA_GEFORCE_FX_GO5200 << 16) | PCI_VENDOR_ID_NVIDIA;
         break;
     case NV_PBUS_PCI_NV_1:
         val = 0x02b00007;
         break;
-    case 0x100100: /* FB size */
-    case 0x10020c:
-        val = s->vga.vram_size;
+
+    /* PFB (Memory Controller 0x100000..0x100FFF) */
+    case NV_PFB_CFG0:
+        val = s->pfb.cfg0;
+        fprintf(stderr, "[NV34M PFB R] CFG0 (0x100080) -> 0x%08x\n", val);
         break;
-    case NV_PBUS_DEBUG_1:
-        val = s->pbus_debug_1;
+    case NV_PFB_CFG1:
+        val = s->pfb.cfg1;
+        fprintf(stderr, "[NV34M PFB R] CFG1 (0x100084) -> 0x%08x\n", val);
         break;
-    case NV_PSTRAPS:
-        val = s->pstraps;
+    case NV_PFB_CSTATUS:
+        val = s->pfb.cstatus ? s->pfb.cstatus : s->vga.vram_size;
+        fprintf(stderr, "[NV34M PFB R] CSTATUS/VRAM_SIZE (0x100100) -> 0x%08x\n", val);
+        break;
+    case NV_PFB_TIMING0:
+        val = s->pfb.timing0;
+        fprintf(stderr, "[NV34M PFB R] TIMING0 (0x100200) -> 0x%08x\n", val);
+        break;
+    case NV_PFB_TIMING1:
+        val = s->pfb.timing1;
+        fprintf(stderr, "[NV34M PFB R] TIMING1 (0x100204) -> 0x%08x\n", val);
+        break;
+    case NV_PFB_TIMING2:
+        val = s->pfb.timing2;
+        fprintf(stderr, "[NV34M PFB R] TIMING2 (0x100208) -> 0x%08x\n", val);
+        break;
+    case NV_PFB_RAM_AMOUNT:
+        val = s->pfb.ram_amount ? s->pfb.ram_amount : s->vga.vram_size;
+        fprintf(stderr, "[NV34M PFB R] RAM_AMOUNT (0x10020c) -> 0x%08x\n", val);
+        break;
+    case NV_PFB_REFRESH:
+        val = s->pfb.refresh;
+        fprintf(stderr, "[NV34M PFB R] REFRESH (0x100210) -> 0x%08x\n", val);
+        break;
+    case NV_PFB_RAM_CFG:
+        val = s->pfb.ram_cfg;
+        fprintf(stderr, "[NV34M PFB R] RAM_CFG (0x100220) -> 0x%08x\n", val);
+        break;
+    case NV_PFB_WBC:
+        val = s->pfb.wbc;
+        fprintf(stderr, "[NV34M PFB R] WBC (0x100400) -> 0x%08x\n", val);
         break;
 
-    /* VGA CRTC / Sequencer / GC Registers */
+    /* PSTRAPS (0x101000) */
+    case NV_PSTRAPS:
+        val = s->pstraps;
+        fprintf(stderr, "[NV34M PSTRAPS R] (0x101000) -> 0x%08x\n", val);
+        break;
+
+    /* Legacy VGA CRTC / Sequencer / GC shadow */
     case 0x6013c0 ... 0x6013da:
     case 0x6033c0 ... 0x6033da: {
         uint32_t port = 0x3c0 + (addr & 0x1f);
@@ -167,12 +246,13 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
             uint32_t idx = (addr - 0x680000) >> 2;
             if (idx < 1024) {
                 val = s->head_regs[idx];
+                fprintf(stderr, "[NV34M DISPLAY R] offset=0x%04x -> 0x%08x\n", (uint32_t)(addr - 0x680000), val);
             }
         }
         break;
     }
 
-    /* PRAMIN */
+    /* PRAMIN (0x700000..0x7FFFFF) */
     case 0x700000 ... 0x7fffff:
         if (s->ramin_buf) {
             uint32_t offset = (addr - 0x700000) & (NV34M_RAMIN_SIZE - 1);
@@ -181,7 +261,12 @@ static uint64_t nv34m_mmio_read(void *opaque, hwaddr addr, unsigned size)
         break;
 
     default:
-        fprintf(stderr, "[NV34M MMIO READ] addr=0x%06"HWADDR_PRIx" size=%u -> 0x%08x\n", addr, size, val);
+        if (addr >= 0x100000 && addr < 0x101000) {
+            fprintf(stderr, "[NV34M PFB R (unhandled)] offset=0x%04x size=%u -> 0x%08x\n",
+                    (uint32_t)(addr - 0x100000), size, val);
+        } else {
+            fprintf(stderr, "[NV34M MMIO READ] addr=0x%06"HWADDR_PRIx" size=%u -> 0x%08x\n", addr, size, val);
+        }
         break;
     }
 
@@ -193,6 +278,7 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
     NV34MState *s = opaque;
 
     switch (addr) {
+    /* PMC */
     case NV_PMC_BOOT_0:
         /* Read-only chip ID */
         break;
@@ -206,6 +292,7 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
         s->pmc_enable = val;
         break;
 
+    /* PTIMER */
     case NV_PTIMER_NUMERATOR:
         s->ptimer_numerator = val;
         break;
@@ -213,14 +300,63 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
         s->ptimer_denominator = val;
         break;
 
+    /* PBUS */
+    case NV_PBUS_DEBUG_0:
+        s->pbus_debug_0 = val;
+        break;
     case NV_PBUS_DEBUG_1:
         s->pbus_debug_1 = val;
         break;
-    case NV_PSTRAPS:
-        s->pstraps = val;
+
+    /* PFB (Memory Controller 0x100000..0x100FFF) */
+    case NV_PFB_CFG0:
+        s->pfb.cfg0 = val;
+        fprintf(stderr, "[NV34M PFB W] CFG0 (0x100080) = 0x%08"PRIx64"\n", val);
+        break;
+    case NV_PFB_CFG1:
+        s->pfb.cfg1 = val;
+        fprintf(stderr, "[NV34M PFB W] CFG1 (0x100084) = 0x%08"PRIx64"\n", val);
+        break;
+    case NV_PFB_CSTATUS:
+        s->pfb.cstatus = val;
+        fprintf(stderr, "[NV34M PFB W] CSTATUS (0x100100) = 0x%08"PRIx64"\n", val);
+        break;
+    case NV_PFB_TIMING0:
+        s->pfb.timing0 = val;
+        fprintf(stderr, "[NV34M PFB W] TIMING0 (0x100200) = 0x%08"PRIx64"\n", val);
+        break;
+    case NV_PFB_TIMING1:
+        s->pfb.timing1 = val;
+        fprintf(stderr, "[NV34M PFB W] TIMING1 (0x100204) = 0x%08"PRIx64"\n", val);
+        break;
+    case NV_PFB_TIMING2:
+        s->pfb.timing2 = val;
+        fprintf(stderr, "[NV34M PFB W] TIMING2 (0x100208) = 0x%08"PRIx64"\n", val);
+        break;
+    case NV_PFB_RAM_AMOUNT:
+        s->pfb.ram_amount = val;
+        fprintf(stderr, "[NV34M PFB W] RAM_AMOUNT (0x10020c) = 0x%08"PRIx64"\n", val);
+        break;
+    case NV_PFB_REFRESH:
+        s->pfb.refresh = val;
+        fprintf(stderr, "[NV34M PFB W] REFRESH (0x100210) = 0x%08"PRIx64"\n", val);
+        break;
+    case NV_PFB_RAM_CFG:
+        s->pfb.ram_cfg = val;
+        fprintf(stderr, "[NV34M PFB W] RAM_CFG (0x100220) = 0x%08"PRIx64"\n", val);
+        break;
+    case NV_PFB_WBC:
+        s->pfb.wbc = val;
+        fprintf(stderr, "[NV34M PFB W] WBC (0x100400) = 0x%08"PRIx64"\n", val);
         break;
 
-    /* VGA CRTC / Sequencer / GC Registers */
+    /* PSTRAPS */
+    case NV_PSTRAPS:
+        s->pstraps = val;
+        fprintf(stderr, "[NV34M PSTRAPS W] (0x101000) = 0x%08"PRIx64"\n", val);
+        break;
+
+    /* Legacy VGA CRTC / Sequencer / GC shadow */
     case 0x6013c0 ... 0x6013da:
     case 0x6033c0 ... 0x6033da: {
         uint32_t port = 0x3c0 + (addr & 0x1f);
@@ -237,6 +373,8 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
             uint32_t idx = (addr - 0x680000) >> 2;
             if (idx < 1024) {
                 s->head_regs[idx] = val;
+                fprintf(stderr, "[NV34M DISPLAY W] offset=0x%04x val=0x%08"PRIx64"\n",
+                        (uint32_t)(addr - 0x680000), val);
             }
         }
         break;
@@ -251,7 +389,13 @@ static void nv34m_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned s
         break;
 
     default:
-        fprintf(stderr, "[NV34M MMIO WRITE] addr=0x%06"HWADDR_PRIx" val=0x%08"PRIx64" size=%u\n", addr, val, size);
+        if (addr >= 0x100000 && addr < 0x101000) {
+            fprintf(stderr, "[NV34M PFB W (unhandled)] offset=0x%04x val=0x%08"PRIx64" size=%u\n",
+                    (uint32_t)(addr - 0x100000), val, size);
+        } else {
+            fprintf(stderr, "[NV34M MMIO WRITE] addr=0x%06"HWADDR_PRIx" val=0x%08"PRIx64" size=%u\n",
+                    addr, val, size);
+        }
         break;
     }
 }
@@ -282,13 +426,25 @@ static void nv34m_reset(DeviceState *dev)
 
     s->ptimer_numerator = 1;
     s->ptimer_denominator = 1;
-
+    s->pbus_debug_0 = 0x00000000;
     s->pbus_debug_1 = 0x00000000;
     s->pstraps = 0x00000014; /* 32MB DDR1, 1400x1050 panel */
 
     s->pramdac_general = 0x00000000;
     s->pramdac_vpll = 0x00000000;
     s->pramdac_mpll = 0x00000000;
+
+    /* Initialize PFB (Memory Controller - 32MB DDR1) */
+    s->pfb.cfg0 = 0x00000000;
+    s->pfb.cfg1 = 0x00000000;
+    s->pfb.cstatus = s->vga.vram_size;
+    s->pfb.ram_amount = s->vga.vram_size;
+    s->pfb.timing0 = 0x00000000;
+    s->pfb.timing1 = 0x00000000;
+    s->pfb.timing2 = 0x00000000;
+    s->pfb.refresh = 0x00000000;
+    s->pfb.ram_cfg = 0x00000000;
+    s->pfb.wbc = 0x00000000;
 
     vga_common_reset(&s->vga);
 
@@ -443,6 +599,29 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
 
     /* Setup BAR1 (32MB VRAM Aperture) */
     pci_register_bar(dev, 1, PCI_BASE_ADDRESS_MEM_PREFETCH, &vga->vram);
+
+    /* BAR1 / VRAM Physical Aperture Self-Test Pattern Validation */
+    if (vga->vram_ptr) {
+        static const uint32_t test_offsets[] = {0x000000, 0x100000, 0x01ffff00};
+        static const uint32_t test_patterns[] = {0xAA55AA55, 0x12345678, 0xDEADBEEF};
+        for (int t = 0; t < 3; t++) {
+            uint32_t off = test_offsets[t];
+            uint32_t pat = test_patterns[t];
+            uint32_t orig;
+            memcpy(&orig, vga->vram_ptr + off, 4);
+            memcpy(vga->vram_ptr + off, &pat, 4);
+            uint32_t readback;
+            memcpy(&readback, vga->vram_ptr + off, 4);
+            memcpy(vga->vram_ptr + off, &orig, 4);
+            if (readback == pat) {
+                fprintf(stderr, "[NV34M PFB INIT] BAR1/VRAM Aperture Validation PASS at offset 0x%08x (0x%08x)\n",
+                        off, pat);
+            } else {
+                fprintf(stderr, "[NV34M PFB INIT ERROR] BAR1/VRAM Aperture FAIL at offset 0x%08x (wrote 0x%08x, read 0x%08x)\n",
+                        off, pat, readback);
+            }
+        }
+    }
 
     /* Enable PCI Command: Memory Space + I/O Space + Bus Master */
     pci_set_word(dev->config + PCI_COMMAND,
