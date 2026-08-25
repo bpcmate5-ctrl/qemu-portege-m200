@@ -43,6 +43,8 @@
 #undef IN
 #undef OUT
 
+void *pc_m200_get_tseg_ptr(void);
+
 #define PREFIX_REPZ   0x01
 #define PREFIX_REPNZ  0x02
 #define PREFIX_LOCK   0x04
@@ -3521,6 +3523,168 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         return;
     }
 #endif
+    static int g_vbios_4f14_count = 0;
+    static int g_post_ljmp_remaining = 0;
+    if (dc->base.pc_next == 0x000c0003) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [VBIOS EXECUTION] C000:0003 Option ROM Entry (Natural)\n"
+                        "============================================================\n");
+    } else if (dc->base.pc_next == 0x000cc7b2) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [VBIOS EXECUTION] C000:C7B2 Storing PCI BDF into CS:0x0214\n"
+                        "   (BDF assigned to GeForce FX Go5200 01:00.0)\n"
+                        "============================================================\n");
+    } else if (dc->base.pc_next == 0x000ca63c) {
+        g_vbios_4f14_count++;
+        fprintf(stderr, "\n>>> [VBIOS EXECUTION #%d] C000:A63C VBE 4F14 Flat Panel Entry <<<\n", g_vbios_4f14_count);
+    } else if (dc->base.pc_next == 0x000cab21) {
+        fprintf(stderr, ">>> [VBIOS EXECUTION #%d] C000:AB21 VBE 4F14 Subfunction 8Ch Entry <<<\n", g_vbios_4f14_count);
+    } else if (dc->base.pc_next == 0x000cab78) {
+        fprintf(stderr, ">>> [VBIOS EXECUTION #%d] C000:AB78 VBE 4F14 Result: 014F (Pre-VBIOS / Uninitialized) <<<\n", g_vbios_4f14_count);
+    } else if (dc->base.pc_next == 0x000cab85) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [VBIOS EXECUTION #%d] C000:AB85 VBE 4F14 Result: 004F (SUCCESS!)\n"
+                        "   (Flat Panel Interface Validated by authentic VBIOS)\n"
+                        "============================================================\n", g_vbios_4f14_count);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x2f48 && dc->cs_base == 0x000f0000) {
+        uint8_t *tseg_ptr = (uint8_t *)pc_m200_get_tseg_ptr();
+        if (tseg_ptr) {
+            tseg_ptr[0xba140] |= 0x08; /* PM Unit Semaphore Available */
+            tseg_ptr[0xa140] |= 0x08;
+        }
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x6e62) {
+        fprintf(stderr, "\n>>> [POST MASTER STEP 29] Reached 0x%08x (0x6E62 PCI Discovery Entry) <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x8ae9) {
+        fprintf(stderr, "\n>>> [POST PCI DISCOVERY] Reached 0x%08x (0x8AE9 PCI & AGP Setup Entry) <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x8bc3) {
+        fprintf(stderr, "\n>>> [POST AGP BRIDGE CONFIG] Reached 0x%08x (0x8BC3 00:01.0 Bus Setup Entry) <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc03f) {
+        fprintf(stderr, "\n>>> [POST MASTER STEP 30] Reached 0x%08x (0xC03F Flat Panel Setup Entry) <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xba29) {
+        fprintf(stderr, "\n>>> [POST STEP 30 LCD] Reached 0x%08x (0xBA29 Display Controller Service) <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc55d) {
+        fprintf(stderr, "\n>>> [POST MASTER STEP 31] Reached 0x%08x (0xC55D Option ROM Discovery Entry) <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc5b1) {
+        fprintf(stderr, "\n>>> [POST MASTER STEP 32] Reached 0x%08x (0xC5B1 ACPI/S3 Finalize Entry) <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x6f38) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST MASTER STEP 33] Reached 0x%08x (0x6F38 DISP_LOGO Entry!)\n"
+                        "   (Toshiba BIOS Splash Screen & Mode 12h Initialization)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x6a2d) {
+        fprintf(stderr, "\n>>> [POST DISP_LOGO CORE] Reached 0x%08x (0x6A2D Splash Screen Drawing Engine) <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x8121) {
+        fprintf(stderr, "\n>>> [POST MTRR ACCEL] Reached 0x%08x (0x8121 Video Framebuffer MTRR MSR Setup) <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xcd1f) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST VGA PAINTER] Reached 0x%08x (0xCD1F NoteBIOS Framebuffer Painter!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x7c59) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST OPTION ROM & SPLASH THUNK] Reached 0x%08x (0x7C59 Service Entry!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x7d3d) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST SPLASH MOVER] Reached 0x%08x (0x7D3D ROM->RAM Splash Copy!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x7d6a) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST PLANAR STREAMER] Reached 0x%08x (0x7D6A 48KB Bitplane Streamer!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x2838) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST VBE DISPATCHER] Reached 0x%08x (0x2838 Video Mode Setup!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x2fac) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST VBE CALLER] Reached 0x%08x (0x2FAC VBE 4F10 / 4F02 Caller!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xe236) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST INT10 BRIDGE] Reached 0x%08x (0xE236 Protected->Real VBIOS Thunk!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xd9c0) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST A0EB SETTER] Reached 0x%08x (0xD9C0 ORW $0x0022, [0xA0EB]!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xdb8e) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST A0EB GATE] Reached 0x%08x (0xDB8E TESTB $0x02, [0xA0EB]!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xdb97) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST F129 / DISPATCH] Reached 0x%08x (0xDB97 Option ROM Dispatch!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xdba9) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST OPTION ROM PARAMS] Reached 0x%08x (0xDBA9 ESI=C0000003 AX=0100!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xeb81) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST REAL THUNK] Reached 0x%08x (0xEB81 Protected->Real Thunk!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xebc0) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST REAL LRET] Reached 0x%08x (0xEBC0 LRET to C000:0003!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x24c2) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST PCI BIOS INIT] Reached 0x%08x (Module 6 0x24C2 INT 1Ah Install Entry!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x251c) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST PCI BIOS IVT] Reached 0x%08x (Module 6 0x251C IVT 0x68 Write!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x2523) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST PCI BIOS STATE] Reached 0x%08x (Module 6 0x2523 [0x0151]=1 Set!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x2579) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST PCI ALLOC GATE] Reached 0x%08x (Module 6 0x2579 CMPW $1, [0x0151]!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x2586) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST PCI ALLOC ENTRY] Reached 0x%08x (Module 6 0x2586 Table Alloc!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x2de6) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST PCI TABLE SET] Reached 0x%08x (Module 6 0x2DE6 [014B]=8 [014D]=0x200!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x38ff) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST FS:A2 WRITER] Reached 0x%08x (Module 6 0x38FF MOV %%CX, FS:0x00A2!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x668c) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST VIDEO GATE 668C] Reached 0x%08x (Module 2 0x668C CMPW $0, %%FS:0x00A2!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x66b6) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST VIDEO LJMP 66B6] Reached 0x%08x (Module 2 0x66B6 LJMP $0x30, $0xD807!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xd807) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST VIDEO INIT D807] Reached 0x%08x (Module 3 0xD807 Video Init Entry!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if (dc->cs_base == 0x000c0000 && (dc->base.pc_next & 0xFFFF) == 0xc7b2) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   >>> [VBIOS C7B2 HIT] Reached C000:C7B2 (C0214 Parameter Block Init!) <<<\n"
+                        "============================================================\n");
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x6b7f) {
+        uint8_t *tseg_ptr = (uint8_t *)pc_m200_get_tseg_ptr();
+        if (tseg_ptr) {
+            tseg_ptr[0xb0000] = 0x80; /* NOR Flash Ready Status (Bit 7 = 1) */
+            tseg_ptr[0x00000] = 0x80;
+        }
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x02f4) {
+        g_post_ljmp_remaining = 200;
+        fprintf(stderr, "\n>>> [POST DISPATCHER LJMP] Reached 0x%08x (0x02F4 ljmp *%%cs:(%%di)) <<<\n", (uint32_t)dc->base.pc_next);
+    } else if (g_post_ljmp_remaining > 0) {
+        g_post_ljmp_remaining--;
+        fprintf(stderr, "    [POST STEP TRACE] pc=0x%08x (off=0x%04x) cs_base=0x%08x\n",
+                (uint32_t)dc->base.pc_next, (uint32_t)(dc->base.pc_next & 0xFFFF), (uint32_t)dc->cs_base);
+    }
 
     switch (sigsetjmp(dc->jmpbuf, 0)) {
     case 0:

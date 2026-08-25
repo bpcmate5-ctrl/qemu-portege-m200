@@ -46,6 +46,7 @@
 static uint8_t toshiba_m200_port85 = 0x00;
 static uint8_t *toshiba_system_ram = NULL;
 static MemoryRegion *g_shadow_ram_f0000 = NULL;
+static MemoryRegion *g_smram_tseg = NULL;
 
 uint32_t pc_m200_get_cpu_eip(void)
 {
@@ -55,6 +56,14 @@ uint32_t pc_m200_get_cpu_eip(void)
         return x86_cpu->env.eip;
     }
     return 0;
+}
+
+void *pc_m200_get_tseg_ptr(void)
+{
+    if (g_smram_tseg) {
+        return memory_region_get_ram_ptr(g_smram_tseg);
+    }
+    return NULL;
 }
 
 static uint64_t toshiba_m200_io_read(void *opaque, hwaddr addr, unsigned size)
@@ -116,7 +125,7 @@ static uint64_t toshiba_acpi_ec_data_read(void *opaque, hwaddr addr, unsigned si
 {
     ToshibaAcpiECState *ec = opaque;
     ec->status &= ~0x01; /* Clear OBF */
-    return 0x01; /* EC Status / Power / Security Signature Valid (0x01) */
+    return 0x00; /* EC Status / Power Query Success (0x00) */
 }
 
 static void toshiba_acpi_ec_data_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
@@ -127,7 +136,8 @@ static void toshiba_acpi_ec_data_write(void *opaque, hwaddr addr, uint64_t val, 
 
 static uint64_t toshiba_acpi_ec_cmd_read(void *opaque, hwaddr addr, unsigned size)
 {
-    return 0x71; /* 0x70 = System Power ON, AC connected, Lid Open | 0x01 = OBF data ready */
+    ToshibaAcpiECState *ec = opaque;
+    return (ec->status & 0x01) | 0x70; /* 0x70 = System Power ON, AC connected, Lid Open | OBF */
 }
 
 static void toshiba_acpi_ec_cmd_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
@@ -207,10 +217,18 @@ static void toshiba_dport_write(void *opaque, hwaddr addr, uint64_t val, unsigne
             dp->current_code = (val & 0xff);
             dp->byte_count = 1;
         } else {
-            dp->current_code |= ((val & 0xff) << 8);
+            dp->current_code = (dp->current_code << 8) | (val & 0xff);
             dp->byte_count = 0;
-            fprintf(stderr, "\n>>> [TOSHIBA D-PORT PJ2000] 0x%04X : %s <<<\n",
-                    dp->current_code, dport_code_name(dp->current_code));
+            if (dp->current_code == 0xF113) {
+                fprintf(stderr, "\n============================================================\n"
+                                "   ENTERING F113: DISP_LOGO (Authentic Toshiba Splash Mode)\n"
+                                "   EIP=0x%08x\n"
+                                "============================================================\n",
+                        pc_m200_get_cpu_eip());
+            } else {
+                fprintf(stderr, "\n>>> [TOSHIBA D-PORT PJ2000] 0x%04X : %s <<<\n",
+                        dp->current_code, dport_code_name(dp->current_code));
+            }
         }
     }
 }
@@ -267,12 +285,17 @@ static uint64_t toshiba_lcd_d800_read(void *opaque, hwaddr addr, unsigned size)
     case 0x00: return 0x0001; /* LCD Enabled */
     case 0x02: return 0x0000; /* Status Ready */
     case 0x04: return 0x0002; /* Display Controller Ready */
-    case 0x08: return 0x0000; /* Transfer Ready */
+    case 0x08: {
+        /* Intel ICH4-M ACPI Power Management Timer (3.579545 MHz counter on Port 0xD808) */
+        uint64_t ticks = (qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) * 3579545ULL) / 1000000000ULL;
+        return (uint32_t)(ticks & 0x00ffffff);
+    }
     case 0x2c: return 0x0000; /* LCD Timing Status Ready */
     case 0x2e: return 0x2000; /* Backlight Inverter ON */
     case 0x30: return 0x4000; /* Select Bay IDE Power ON */
     case 0x38: return 0x0000; /* Panel Frequency Ready */
     case 0x68: return 0x0800; /* Panel Resolution Ready (1400x1050 SXGA+) */
+    case 0x80: return 0x0002; /* Toshiba Video BitBLT / DMA Engine Ready */
     default: return 0x0000;
     }
 }
@@ -309,7 +332,11 @@ static void toshiba_apmc_write(void *opaque, hwaddr addr, uint64_t val, unsigned
     CPUX86State *env = &x86_cpu->env;
 
     uint8_t cmd = val & 0xff;
-    fprintf(stderr, ">>> [TOSHIBA SMM SMI TRIGGER PORT 0xB2] CMD=0x%02X <<<\n", cmd);
+    if (g_smram_tseg) {
+        uint8_t *tseg_ptr = (uint8_t *)memory_region_get_ram_ptr(g_smram_tseg);
+        tseg_ptr[0xba140] |= 0x0a; /* 0x08 = PM Unit Ready, 0x02 = PM Command Complete */
+        tseg_ptr[0xa140] |= 0x0a;
+    }
 
     if (cmd == 0xc1 || cmd == 0x4d || cmd == 0x16 || cmd == 0xfe || cmd == 0xff) {
         /* Toshiba SMM Signature 'TX\x00\x01' in EAX */
@@ -830,7 +857,9 @@ static const MemoryRegionOps toshiba_smbus_ops = {
     },
 };
 
-static MemoryRegion *g_smram_tseg = NULL;
+static MemoryRegion *g_shadow_c0000 = NULL;
+static MemoryRegion *g_shadow_e0000 = NULL;
+static MemoryRegion *g_shadow_f0000 = NULL;
 static uint8_t g_bios_image[0x80000];
 static bool g_bios_loaded = false;
 
@@ -840,6 +869,9 @@ static void pc_m200_reset_handler(void *opaque)
     if (x86ms->bios.ram_block) {
         uint8_t *bios_ptr = memory_region_get_ram_ptr(&x86ms->bios);
         int bios_size = memory_region_size(&x86ms->bios);
+        if (g_bios_loaded && bios_size >= 0x80000) {
+            memcpy(bios_ptr, g_bios_image, 0x80000);
+        }
         if (bios_size >= 0x10) {
             uint8_t *rv = bios_ptr + bios_size - 0x10;
             rv[0] = 0xea;
@@ -848,15 +880,66 @@ static void pc_m200_reset_handler(void *opaque)
             rv[3] = 0x00;
             rv[4] = 0xf0; /* ljmp $0xF000, $0x291C */
         }
+        uint8_t buf[16];
+        cpu_physical_memory_read(0xfffffff0, buf, 16);
+        fprintf(stderr, "[RESET HANDLER] 0xFFFFFFF0: %02x %02x %02x %02x %02x\n",
+                buf[0], buf[1], buf[2], buf[3], buf[4]);
+        cpu_physical_memory_read(0x000ffff0, buf, 16);
+        fprintf(stderr, "[RESET HANDLER] 0x000FFFF0: %02x %02x %02x %02x %02x\n",
+                buf[0], buf[1], buf[2], buf[3], buf[4]);
+        if (g_bios_loaded) {
+            if (g_shadow_f0000) {
+                uint8_t *f0000_ptr = (uint8_t *)memory_region_get_ram_ptr(g_shadow_f0000);
+                memcpy(f0000_ptr, g_bios_image + 0x20000, 0x10000);
+                f0000_ptr[0xfff0] = 0xea;
+                f0000_ptr[0xfff1] = 0x1c;
+                f0000_ptr[0xfff2] = 0x29;
+                f0000_ptr[0xfff3] = 0x00;
+                f0000_ptr[0xfff4] = 0xf0;
+            }
+            if (g_shadow_e0000) {
+                uint8_t *e0000_ptr = (uint8_t *)memory_region_get_ram_ptr(g_shadow_e0000);
+                memcpy(e0000_ptr, g_bios_image + 0x30000, 0x10000);
+                /* Module 3 shadow entry headers */
+                e0000_ptr[0] = 0xe9;
+                e0000_ptr[1] = 0xb8;
+                e0000_ptr[2] = 0x69; /* jmp 0x69bb */
+                e0000_ptr[3] = 0xcb; /* lret */
+                e0000_ptr[4] = 0xe9;
+                e0000_ptr[5] = 0x8d;
+                e0000_ptr[6] = 0xeb; /* jmp 0xeb94 */
+                e0000_ptr[0x6ca1] = 0xcb; /* lret to caller */
+            }
+            if (g_shadow_c0000) {
+                uint8_t *c0000_ptr = (uint8_t *)memory_region_get_ram_ptr(g_shadow_c0000);
+                memcpy(c0000_ptr, g_bios_image + 0x40000, 0x10000);
+            }
+        }
         if (g_smram_tseg && g_bios_loaded) {
             uint8_t *tseg_ptr = (uint8_t *)memory_region_get_ram_ptr(g_smram_tseg);
             uint8_t *mod3 = g_bios_image + 0x30000;
             memcpy(tseg_ptr + 0xa0000, mod3, 0x10000);
-            memcpy(tseg_ptr + 0xb0000, mod3, 0x10000);
+            memset(tseg_ptr + 0xb0000, 0, 0x10000);
 
             /* Preload GDT Table at 0xFEDBF000 (offset 0xBF000 in smram_tseg) */
             uint8_t *gdt_dest = tseg_ptr + 0xbf000;
             memcpy(gdt_dest, mod3 + 0x0046, 0x130);
+            tseg_ptr[0xb9ef0] = 0x04; /* IDE/DMA Controller Ready */
+            tseg_ptr[0x9ef0] = 0x04;
+            tseg_ptr[0xb39df] = 0x0c; /* AC Power Present + Main Battery Good */
+            tseg_ptr[0xb39e6] = 0x40; /* Lid Open / LCD Flat Panel Active */
+            tseg_ptr[0x39df] = 0x0c;
+            tseg_ptr[0x39e6] = 0x40;
+            tseg_ptr[0xb39ad] = 0x80; /* APM Mode Active */
+            tseg_ptr[0xb39ae] = 0x80; /* APM Mode Enabled / SMM Ready */
+            tseg_ptr[0xb39af] = 0x01; /* AC Power Present / Normal Power State */
+            tseg_ptr[0x39ad] = 0x80;
+            tseg_ptr[0x39ae] = 0x80;
+            tseg_ptr[0x39af] = 0x01;
+            tseg_ptr[0xba140] = 0x08; /* PM Unit Semaphore Available */
+            tseg_ptr[0xa140] = 0x08;
+            tseg_ptr[0xb9fbf] = 0x40; /* System Expansion / PCI Controller Ready */
+            tseg_ptr[0x9fbf] = 0x40;
             gdt_dest[0x32] = 0x00; gdt_dest[0x34] = 0xda; gdt_dest[0x37] = 0xfe;
             gdt_dest[0x3a] = 0x00; gdt_dest[0x3c] = 0xda; gdt_dest[0x3f] = 0xfe;
 
@@ -873,7 +956,9 @@ static void pc_m200_reset_handler(void *opaque)
                 uint16_t *gate = (uint16_t *)(idt + int_num * 8);
                 gate[0] = target_offset;
             }
-            tb_flush__exclusive_or_serial();
+            if (first_cpu) {
+                queue_tb_flush(first_cpu);
+            }
         }
     }
 }
@@ -1021,8 +1106,8 @@ static void m200_init(MachineState *machine)
         /* Boot sequence: CD-ROM first (0x03), then HDD (0x02), then FDD (0x01) */
         mc146818rtc_set_cmos_data(rtc_s, 0x38, 0x32);
         mc146818rtc_set_cmos_data(rtc_s, 0x3d, 0x20);
-        /* Shutdown status byte: 0x06 = Normal Cold Boot (accessed via port 0x70 bit 7 NMI disable as 0x8F) */
-        mc146818rtc_set_cmos_data(rtc_s, 0x0f, 0x06);
+        /* Shutdown status byte: 0x00 = Initial Cold Power-on State */
+        mc146818rtc_set_cmos_data(rtc_s, 0x0f, 0x00);
     }
 
     /* USB UHCI & EHCI (D29:F0, F1, F2, F7) */
@@ -1112,6 +1197,9 @@ static void m200_init(MachineState *machine)
         memory_region_init_ram(shadow_ram_e0000, NULL, "m200.shadow-e0000", 0x10000, &error_fatal);
         MemoryRegion *shadow_ram_f0000 = g_new(MemoryRegion, 1);
         memory_region_init_ram(shadow_ram_f0000, NULL, "m200.shadow-f0000", 0x10000, &error_fatal);
+        g_shadow_c0000 = shadow_ram_c0000;
+        g_shadow_e0000 = shadow_ram_e0000;
+        g_shadow_f0000 = shadow_ram_f0000;
         g_shadow_ram_f0000 = shadow_ram_f0000;
 
         char *filename = qemu_find_file(QEMU_FILE_TYPE_BIOS, machine->firmware);
@@ -1127,17 +1215,32 @@ static void m200_init(MachineState *machine)
                     g_bios_loaded = true;
                 }
 
-                /* Preload Module 3 into High SMRAM at 0xFEDA0000 and 0xFEDB0000 */
+                /* Preload Module 3 into High SMRAM at 0xFEDA0000 and clear BSS at 0xFEDB0000 */
                 uint8_t *tseg_ptr = (uint8_t *)memory_region_get_ram_ptr(smram_tseg);
                 fseek(f, 0x30000, SEEK_SET);
                 if (fread(tseg_ptr + 0xa0000, 1, 0x10000, f) == 0x10000) {}
-                fseek(f, 0x30000, SEEK_SET);
-                if (fread(tseg_ptr + 0xb0000, 1, 0x10000, f) == 0x10000) {}
+                memset(tseg_ptr + 0xb0000, 0, 0x10000);
 
                 /* Preload authentic NoteBIOS GDT Table at 0xFEDBF000 (offset 0xBF000 in smram_tseg) */
                 uint8_t *gdt_dest = tseg_ptr + 0xbf000;
                 uint8_t *mod3 = tseg_ptr + 0xa0000;
                 memcpy(gdt_dest, mod3 + 0x0046, 0x130);
+                tseg_ptr[0xb9ef0] = 0x04; /* IDE/DMA Controller Ready */
+                tseg_ptr[0x9ef0] = 0x04;
+                tseg_ptr[0xb39df] = 0x0c; /* AC Power Present + Main Battery Good */
+                tseg_ptr[0xb39e6] = 0x40; /* Lid Open / LCD Flat Panel Active */
+                tseg_ptr[0x39df] = 0x0c;
+                tseg_ptr[0x39e6] = 0x40;
+                tseg_ptr[0xb39ad] = 0x80; /* APM Mode Active */
+                tseg_ptr[0xb39ae] = 0x80; /* APM Mode Enabled / SMM Ready */
+                tseg_ptr[0xb39af] = 0x01; /* AC Power Present / Normal Power State */
+                tseg_ptr[0x39ad] = 0x80;
+                tseg_ptr[0x39ae] = 0x80;
+                tseg_ptr[0x39af] = 0x01;
+                tseg_ptr[0xba140] = 0x08; /* PM Unit Semaphore Available */
+                tseg_ptr[0xa140] = 0x08;
+                tseg_ptr[0xb9fbf] = 0x40; /* System Expansion / PCI Controller Ready */
+                tseg_ptr[0x9fbf] = 0x40;
                 /* Pre-configure Selector 0x30 and 0x38 to point to 0xFEDA0000 */
                 gdt_dest[0x32] = 0x00; gdt_dest[0x34] = 0xda; gdt_dest[0x37] = 0xfe;
                 gdt_dest[0x3a] = 0x00; gdt_dest[0x3c] = 0xda; gdt_dest[0x3f] = 0xfe;
@@ -1156,13 +1259,6 @@ static void m200_init(MachineState *machine)
                     gate[0] = target_offset;
                 }
 
-                /* Map full 512KB Flash ROM at Top of 4GB Address Space (0xFFF80000..0xFFFFFFFF) */
-                MemoryRegion *bios_high = g_new(MemoryRegion, 1);
-                memory_region_init_ram(bios_high, NULL, "m200.bios-high", 0x80000, &error_fatal);
-                fseek(f, 0, SEEK_SET);
-                if (fread(memory_region_get_ram_ptr(bios_high), 1, 0x80000, f) == 0x80000) {}
-                memory_region_add_subregion_overlap(system_memory, 0xfff80000, bios_high, 1000);
-
                 /* Preload Module 4 Authentic NVIDIA VBIOS at 0xC0000 */
                 fseek(f, 0x40000, SEEK_SET);
                 if (fread(memory_region_get_ram_ptr(shadow_ram_c0000), 1, 0x10000, f) == 0x10000) {}
@@ -1176,6 +1272,15 @@ static void m200_init(MachineState *machine)
                         sum += e0000_ptr[k];
                     }
                     e0000_ptr[0x7fff] -= sum;
+                    /* Module 3 shadow entry headers */
+                    e0000_ptr[0] = 0xe9;
+                    e0000_ptr[1] = 0xb8;
+                    e0000_ptr[2] = 0x69; /* jmp 0x69bb */
+                    e0000_ptr[3] = 0xcb; /* lret */
+                    e0000_ptr[4] = 0xe9;
+                    e0000_ptr[5] = 0x8d;
+                    e0000_ptr[6] = 0xeb; /* jmp 0xeb94 */
+                    e0000_ptr[0x6ca1] = 0xcb; /* lret to caller */
                 }
 
                 /* Preload Module 2 System BIOS into 0xF0000 */
@@ -1189,13 +1294,6 @@ static void m200_init(MachineState *machine)
                 ptr[0xfff2] = 0x29;
                 ptr[0xfff3] = 0x00;
                 ptr[0xfff4] = 0xf0; /* ljmp $0xF000, $0x291C (Authentic Module 2 Cold POST Entry) */
-
-                uint8_t *bhigh_ptr = (uint8_t *)memory_region_get_ram_ptr(bios_high);
-                bhigh_ptr[0x7fff0] = 0xea;
-                bhigh_ptr[0x7fff1] = 0x1c;
-                bhigh_ptr[0x7fff2] = 0x29;
-                bhigh_ptr[0x7fff3] = 0x00;
-                bhigh_ptr[0x7fff4] = 0xf0; /* ljmp $0xF000, $0x291C */
                 fclose(f);
             }
             g_free(filename);

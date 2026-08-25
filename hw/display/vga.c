@@ -869,12 +869,45 @@ uint32_t vga_mem_readb(VGACommonState *s, hwaddr addr)
     return ret;
 }
 
-/* called for accesses between 0xa0000 and 0xc0000 */
 void vga_mem_writeb(VGACommonState *s, hwaddr addr, uint32_t val)
 {
     int memory_map_mode, write_mode, b, func_select, mask;
     uint32_t write_mask, bit_mask, set_mask;
     int plane = 0;
+
+    static bool first_a0000_write = true;
+    if (first_a0000_write) {
+        first_a0000_write = false;
+        fprintf(stderr, "\n============================================================\n"
+                        "   [VGA 0xA0000 FIRST WRITE] addr=0x%05x val=0x%02x\n"
+                        "============================================================\n",
+                (uint32_t)addr, val);
+        fprintf(stderr, "   MISC=0x%02x\n", s->msr);
+        fprintf(stderr, "   SEQ:  00=%02x 01=%02x 02=%02x 03=%02x 04=%02x\n",
+                s->sr[0], s->sr[1], s->sr[2], s->sr[3], s->sr[4]);
+        fprintf(stderr, "   GC:   00=%02x 01=%02x 02=%02x 03=%02x 04=%02x 05=%02x 06=%02x 07=%02x 08=%02x\n",
+                s->gr[0], s->gr[1], s->gr[2], s->gr[3], s->gr[4], s->gr[5], s->gr[6], s->gr[7], s->gr[8]);
+        fprintf(stderr, "   CRTC: 00=%02x 01=%02x 02=%02x 03=%02x 04=%02x 05=%02x 06=%02x 07=%02x\n",
+                s->cr[0], s->cr[1], s->cr[2], s->cr[3], s->cr[4], s->cr[5], s->cr[6], s->cr[7]);
+        fprintf(stderr, "         08=%02x 09=%02x 0A=%02x 0B=%02x 0C=%02x 0D=%02x 0E=%02x 0F=%02x\n",
+                s->cr[8], s->cr[9], s->cr[10], s->cr[11], s->cr[12], s->cr[13], s->cr[14], s->cr[15]);
+        fprintf(stderr, "         10=%02x 11=%02x 12=%02x 13=%02x 14=%02x 15=%02x 16=%02x 17=%02x 18=%02x\n",
+                s->cr[16], s->cr[17], s->cr[18], s->cr[19], s->cr[20], s->cr[21], s->cr[22], s->cr[23], s->cr[24]);
+        fprintf(stderr, "   ATTR: 00..0F: ");
+        for (int ai = 0; ai < 16; ai++) fprintf(stderr, "%02x ", s->ar[ai]);
+        fprintf(stderr, "\n         10=%02x 11=%02x 12=%02x 13=%02x 14=%02x (video_en=%d)\n",
+                s->ar[16], s->ar[17], s->ar[18], s->ar[19], s->ar[20], (s->ar_index & 0x20) ? 1 : 0);
+        fprintf(stderr, "\n   [VGA MODE SUMMARY]\n");
+        fprintf(stderr, "   graphics_mode      = %s\n", (s->gr[VGA_GFX_MISC] & 1) ? "YES" : "NO (Text)");
+        fprintf(stderr, "   A0000_aperture     = %s\n", (((s->gr[VGA_GFX_MISC] >> 2) & 3) == 0 || ((s->gr[VGA_GFX_MISC] >> 2) & 3) == 1) ? "YES (A0000-AFFFF/BFFFF)" : "NO (B8000/B0000)");
+        fprintf(stderr, "   chain4             = %s\n", (s->sr[VGA_SEQ_MEMORY_MODE] & VGA_SR04_CHN_4M) ? "YES (Linear/Mode13h)" : "NO (Planar Mode12h)");
+        fprintf(stderr, "   odd_even           = %s\n", (s->gr[VGA_GFX_MISC] & VGA_GR06_CHAIN_ODD_EVEN) ? "YES" : "NO");
+        fprintf(stderr, "   planes_enabled     = 0x%02x\n", s->sr[VGA_SEQ_PLANE_WRITE] & 0x0F);
+        fprintf(stderr, "   write_mode         = %d\n", s->gr[VGA_GFX_MODE] & 3);
+        fprintf(stderr, "   screen_disabled    = %s\n", (s->sr[VGA_SEQ_CLOCK_MODE] & 0x20) ? "YES" : "NO");
+        fprintf(stderr, "   attribute_video_on = %s\n", (s->ar_index & 0x20) ? "YES" : "NO");
+        fprintf(stderr, "============================================================\n");
+    }
 
 #ifdef DEBUG_VGA_MEM
     printf("vga: [0x" HWADDR_FMT_plx "] = 0x%02x\n", addr, val);

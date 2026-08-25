@@ -239,19 +239,15 @@ static void ich4m_lpc_reset(DeviceState *qdev)
 static void ich4m_rst_cnt_write(void *opaque, hwaddr addr, uint64_t val,
                                 unsigned width)
 {
-    switch (val) {
-    case 0:
-        /* Normal - do nothing */
-        break;
-    case 2:
-    case 4:
-        /* Soft / Hard Reset */
+    ICH4MLPCState *lpc = opaque;
+
+    fprintf(stderr, "[PORT CF9 W] val=0x%02x\n", (uint8_t)val);
+
+    if (val & 4) {
         qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
-        break;
-    default:
-        qemu_log_mask(LOG_UNIMP, "ICH4M: Unimplemented reset type %" PRIx64 "\n", val);
-        break;
+        return;
     }
+    lpc->rst_cnt = val & 0xA; /* keep FULL_RST (bit 3) and SYS_RST (bit 1) */
 }
 
 static uint64_t ich4m_rst_cnt_read(void *opaque, hwaddr addr, unsigned width)

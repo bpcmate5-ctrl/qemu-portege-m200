@@ -165,12 +165,32 @@ static inline int load_segment_ra(CPUX86State *env, uint32_t *e1_ptr,
         return -1;
     }
     ptr = dt->base + index;
-    if (!(env->cr[0] & CR0_PG_MASK)) {
-        cpu_physical_memory_read(ptr, e1_ptr, 4);
-        cpu_physical_memory_read(ptr + 4, e2_ptr, 4);
-    } else {
-        *e1_ptr = cpu_ldl_kernel_ra(env, ptr, retaddr);
-        *e2_ptr = cpu_ldl_kernel_ra(env, ptr + 4, retaddr);
+    *e1_ptr = cpu_ldl_kernel_ra(env, ptr, retaddr);
+    *e2_ptr = cpu_ldl_kernel_ra(env, ptr + 4, retaddr);
+    /* Diagnostic: compare TLB path vs physical path for High SMRAM addresses */
+    if (ptr >= 0xFED00000 && ptr < 0xFEE00000) {
+        uint32_t phys_e1 = 0, phys_e2 = 0;
+        cpu_physical_memory_read(ptr, &phys_e1, 4);
+        cpu_physical_memory_read(ptr + 4, &phys_e2, 4);
+        uint32_t a20_mask = x86_get_a20_mask(env);
+        target_ulong masked_ptr = ptr & a20_mask;
+        uint32_t a20_e1 = 0, a20_e2 = 0;
+        cpu_physical_memory_read(masked_ptr, &a20_e1, 4);
+        cpu_physical_memory_read(masked_ptr + 4, &a20_e2, 4);
+        fprintf(stderr, "[SEG_DIAG] sel=0x%04x ptr=0x%08"PRIx64
+                " TLB=[0x%08x 0x%08x]"
+                " PHYS=[0x%08x 0x%08x]"
+                " A20mask=0x%08x masked_ptr=0x%08"PRIx64
+                " A20_PHYS=[0x%08x 0x%08x]"
+                " CR0=0x%08"PRIx64" PE=%d PG=%d\n",
+                selector, (uint64_t)ptr,
+                *e1_ptr, *e2_ptr,
+                phys_e1, phys_e2,
+                a20_mask, (uint64_t)masked_ptr,
+                a20_e1, a20_e2,
+                (uint64_t)env->cr[0],
+                !!(env->cr[0] & CR0_PE_MASK),
+                !!(env->cr[0] & CR0_PG_MASK));
     }
     return 0;
 }
@@ -2000,6 +2020,18 @@ void helper_iret_real(CPUX86State *env, int shift)
     }
     cpu_load_eflags(env, new_eflags, eflags_mask);
     env->hflags2 &= ~HF2_NMI_MASK;
+    if (env->segs[R_CS].base == 0x000c0000 || (new_cs == 0xf000 && new_eip >= 0xa390 && new_eip <= 0xa3b0) || (new_cs == 0x0030 && new_eip >= 0xe270 && new_eip <= 0xe290)) {
+        uint16_t vbios_bdf = 0;
+        cpu_physical_memory_read(0xc0214, &vbios_bdf, 2);
+        fprintf(stderr, "\n============================================================\n"
+                        "   [INT10 VBIOS IRET] RET TO %04x:%08x  EAX=0x%08x  EBX=0x%08x\n"
+                        "   ECX=0x%08x  EDX=0x%08x  EFL=0x%08x  (VBIOS C0214=0x%04x)\n"
+                        "============================================================\n",
+                (uint16_t)new_cs, (uint32_t)new_eip,
+                (uint32_t)env->regs[R_EAX], (uint32_t)env->regs[R_EBX],
+                (uint32_t)env->regs[R_ECX], (uint32_t)env->regs[R_EDX],
+                (uint32_t)env->eflags, vbios_bdf);
+    }
 }
 
 static inline void validate_seg(CPUX86State *env, X86Seg seg_reg, int cpl)

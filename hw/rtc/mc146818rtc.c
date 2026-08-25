@@ -434,6 +434,9 @@ static void cmos_ioport_write(void *opaque, hwaddr addr,
         s->cmos_index = data & 0x7f;
     } else {
         trace_mc146818_rtc_ioport_write(s->cmos_index, data);
+        if (s->cmos_index == 0x0f) {
+            fprintf(stderr, "[CMOS] Write 0x0F (shutdown status) = 0x%02x\n", (uint8_t)data);
+        }
         switch(s->cmos_index) {
         case RTC_SECONDS_ALARM:
         case RTC_MINUTES_ALARM:
@@ -722,6 +725,9 @@ static uint64_t cmos_ioport_read(void *opaque, hwaddr addr,
             break;
         }
         trace_mc146818_rtc_ioport_read(s->cmos_index, ret);
+        if (idx == 0x0f) {
+            fprintf(stderr, "[CMOS] Read 0x0F (shutdown status) = 0x%02x\n", ret);
+        }
         return ret;
     }
 }
@@ -964,11 +970,10 @@ static void rtc_reset_enter(Object *obj, ResetType type)
 {
     MC146818RtcState *s = MC146818_RTC(obj);
 
-    /* CMOS 0x0F shutdown status is preserved across resets as on physical PC RTC hardware */
-    /* if (s->cmos_data[0x0f] != 0xfe) {
-        s->cmos_data[0x0f] = 0x00;
-    } */
-
+    /*
+     * Real MC146818 NVRAM (bytes 0x0E..0x7F, including 0x0F shutdown status)
+     * is battery-backed static RAM and is never wiped by CPU/system resets.
+     */
     s->cmos_data[RTC_REG_B] &= ~(REG_B_PIE | REG_B_AIE | REG_B_SQWE);
     s->cmos_data[RTC_REG_C] &= ~(REG_C_UF | REG_C_IRQF | REG_C_PF | REG_C_AF);
     check_update_timer(s);

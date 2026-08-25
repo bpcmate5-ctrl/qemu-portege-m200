@@ -32,6 +32,8 @@ static void port92_write(void *opaque, hwaddr addr, uint64_t val,
     int oldval = s->outport;
 
     trace_port92_write(val);
+    fprintf(stderr, "[PORT92 W] val=0x%02x old=0x%02x A20=%d→%d RESET=%d\n",
+            (uint8_t)val, oldval, (oldval >> 1) & 1, ((int)val >> 1) & 1, (int)(val & 1) && !(oldval & 1));
     s->outport = val;
     qemu_set_irq(s->a20_out, (val >> 1) & 1);
     if ((val & 1) && !(oldval & 1)) {
@@ -47,6 +49,7 @@ static uint64_t port92_read(void *opaque, hwaddr addr,
 
     ret = s->outport;
     trace_port92_read(ret);
+    fprintf(stderr, "[PORT92 R] val=0x%02x A20=%d\n", ret, (ret >> 1) & 1);
 
     return ret;
 }

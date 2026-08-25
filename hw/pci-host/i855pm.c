@@ -270,6 +270,35 @@ static void i855pm_mch_update_smram(I855PMMCHState *mch)
     memory_region_transaction_commit();
 }
 
+static uint64_t i855pm_mchbar_read(void *opaque, hwaddr addr, unsigned size)
+{
+    I855PMMCHState *mch = opaque;
+    if (addr + size <= sizeof(mch->mchbar_regs)) {
+        uint64_t val = 0;
+        memcpy(&val, mch->mchbar_regs + addr, size);
+        return val;
+    }
+    return 0;
+}
+
+static void i855pm_mchbar_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+{
+    I855PMMCHState *mch = opaque;
+    if (addr + size <= sizeof(mch->mchbar_regs)) {
+        memcpy(mch->mchbar_regs + addr, &val, size);
+    }
+}
+
+static const MemoryRegionOps i855pm_mchbar_ops = {
+    .read = i855pm_mchbar_read,
+    .write = i855pm_mchbar_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 4,
+    },
+};
+
 static void i855pm_mch_write_config(PCIDevice *d,
                                     uint32_t address, uint32_t val, int len)
 {
@@ -383,6 +412,12 @@ static void i855pm_mch_realize(PCIDevice *d, Error **errp)
                                         I855PM_HOST_BRIDGE_SMRAM_C_BASE,
                                         &mch->smram_region, 1);
     memory_region_set_enabled(&mch->smram_region, false);
+
+    /* Intel 855PM Memory Controller Hub MMIO BAR at 0x80000000 (64KB) */
+    memory_region_init_io(&mch->mchbar_region, OBJECT(mch), &i855pm_mchbar_ops, mch,
+                          "i855pm-mchbar", 0x10000);
+    memory_region_add_subregion_overlap(mch->system_memory, 0x80000000,
+                                        &mch->mchbar_region, 1);
 }
 
 static void i855pm_mch_class_init(ObjectClass *klass, const void *data)

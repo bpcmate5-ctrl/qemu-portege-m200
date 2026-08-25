@@ -95,6 +95,49 @@ void raise_interrupt2(CPUX86State *env, int intno,
 {
     CPUState *cs = env_cpu(env);
     uint64_t last_pc = env->eip + env->segs[R_CS].base;
+    if (intno == 0x10) {
+        uint16_t vbios_bdf = 0;
+        cpu_physical_memory_read(0xc0214, &vbios_bdf, 2);
+        uint32_t eax = (uint32_t)env->regs[R_EAX];
+        uint32_t ebx = (uint32_t)env->regs[R_EBX];
+        uint32_t ecx = (uint32_t)env->regs[R_ECX];
+        uint32_t edx = (uint32_t)env->regs[R_EDX];
+
+        static int int10_call_seq = 0;
+        int10_call_seq++;
+
+        fprintf(stderr, "\n============================================================\n"
+                        "   [VBE / INT 10h CALL #%d] CS:EIP = %04x:%08x (CS_BASE = 0x%08x)\n"
+                        "   AX = 0x%04x  BX = 0x%04x  CX = 0x%04x  DX = 0x%04x\n"
+                        "   ES:EDI = %04x:%08x  VBIOS C0214 = 0x%04x\n",
+                int10_call_seq, (uint16_t)env->segs[R_CS].selector, (uint32_t)env->eip,
+                (uint32_t)env->segs[R_CS].base,
+                (uint16_t)eax, (uint16_t)ebx, (uint16_t)ecx, (uint16_t)edx,
+                (uint16_t)env->segs[R_ES].selector, (uint32_t)env->regs[R_EDI],
+                vbios_bdf);
+        if ((eax & 0xFF00) == 0x4F00) {
+            uint8_t func = eax & 0xFF;
+            if (func == 0x02) {
+                uint16_t mode = ebx & 0x3FFF;
+                bool lfb = (ebx & 0x4000) != 0;
+                bool preserve = (ebx & 0x8000) != 0;
+                fprintf(stderr, "   >>> [VBE 4F02h SET VIDEO MODE] Mode=0x%04x (LFB=%s, PreserveMemory=%s) <<<\n",
+                        mode, lfb ? "YES (Linear Framebuffer)" : "NO (Windowed/Planar)",
+                        preserve ? "YES" : "NO");
+            } else if (func == 0x10) {
+                fprintf(stderr, "   >>> [VBE 4F10h FLAT PANEL / DDC / DPMS] SubFunction=0x%02x <<<\n", (uint8_t)ebx);
+            } else if (func == 0x14) {
+                fprintf(stderr, "   >>> [VBE 4F14h TOSHIBA FLAT PANEL EXTENSION] SubFunction=0x%02x <<<\n", (uint8_t)ebx);
+            } else {
+                fprintf(stderr, "   >>> [VBE 4F%02Xh FUNCTION] <<<\n", func);
+            }
+        } else if ((eax & 0xFF00) == 0x0000) {
+            fprintf(stderr, "   >>> [VGA SET MODE 0x%02X] (Legacy Mode 0x%02x) <<<\n", (uint8_t)eax, (uint8_t)eax);
+        }
+        fprintf(stderr, "============================================================\n");
+    }
+    fprintf(stderr, "[EXCP] intno=0x%02x is_int=%d err=0x%x eip=0x%08"PRIx64" cs_base=0x%08"PRIx64"\n",
+            intno, is_int, error_code, (uint64_t)env->eip, (uint64_t)env->segs[R_CS].base);
 
     if (!is_int) {
         cpu_svm_check_intercept_param(env, SVM_EXIT_EXCP_BASE + intno,

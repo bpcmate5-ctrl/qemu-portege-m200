@@ -1326,6 +1326,16 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
     pci_set_word(dev->config + PCI_COMMAND,
                  PCI_COMMAND_IO | PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER);
 
+    /* Toshiba Portege M200 Subsystem Vendor / Device IDs (1179:0001) */
+    pci_set_word(dev->config + PCI_SUBSYSTEM_VENDOR_ID, 0x1179);
+    pci_set_word(dev->config + PCI_SUBSYSTEM_ID, 0x0001);
+
+    /*
+     * PCI Config 0x64: Toshiba M200 Mobile Flat Panel Strap ID (0x03 = SXGA+ 1400x1050 / Poly-Si TFT).
+     * Checked by NVIDIA VBIOS VBE/FP 4F14h Subfunction 8Ch (handler at 0xAB21 via 0x5AE2/0x17E3).
+     */
+    pci_set_long(dev->config + 0x64, 0x00000003);
+
     /* Interrupt routing */
     pci_config_set_interrupt_pin(dev->config, 1); /* Pin A */
 

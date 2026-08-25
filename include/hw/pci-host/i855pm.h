@@ -47,6 +47,8 @@ struct I855PMMCHState {
     MemoryRegion *address_space_io;
     PAMMemoryRegion pam_regions[PAM_REGIONS_COUNT];
     MemoryRegion smram_region;
+    MemoryRegion mchbar_region;
+    uint8_t mchbar_regs[0x1000];
     Range pci_hole;
     uint64_t below_4g_mem_size;
     uint64_t above_4g_mem_size;
