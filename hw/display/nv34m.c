@@ -37,6 +37,8 @@
 #define NV34M_MMIO_SIZE   (16 * MiB)
 #define NV34M_VRAM_SIZE   (32 * MiB)
 #define NV34M_RAMIN_SIZE  (1 * MiB)
+#define NV34M_AGP_STATUS  0x1f000017
+#define NV34M_AGP_COMMAND_WMASK 0x1f000317
 
 /* =========================================================================
  * NV34 Register Definitions (Categorized by Engine Block)
@@ -175,6 +177,8 @@ struct NV34MState {
 
     MemoryRegion mmio;
     MemoryRegion ramin;
+    MemoryRegion bar1_aperture;
+    MemoryRegion bar1_vram;
 
     /* PMC Registers */
     uint32_t pmc_boot_0;
@@ -1296,8 +1300,19 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
                           "nv34m-mmio", NV34M_MMIO_SIZE);
     pci_register_bar(dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->mmio);
 
-    /* Setup BAR1 (32MB VRAM Aperture) */
-    pci_register_bar(dev, 1, PCI_BASE_ADDRESS_MEM_PREFETCH, &vga->vram);
+    /*
+     * NV34M exposes a 256 MiB prefetchable BAR1 while this board has 32 MiB
+     * of physical VRAM.  Map the implemented VRAM into the first 32 MiB;
+     * the aliasing/decoding of the remaining aperture is undocumented and
+     * intentionally left unassigned rather than inventing wraparound.
+     */
+    memory_region_init(&s->bar1_aperture, OBJECT(dev),
+                       "nv34m-bar1-aperture", 256 * MiB);
+    memory_region_init_alias(&s->bar1_vram, OBJECT(dev),
+                             "nv34m-bar1-vram", &vga->vram, 0, 32 * MiB);
+    memory_region_add_subregion(&s->bar1_aperture, 0, &s->bar1_vram);
+    pci_register_bar(dev, 1, PCI_BASE_ADDRESS_MEM_PREFETCH,
+                     &s->bar1_aperture);
 
     /* BAR1 / VRAM Physical Aperture Self-Test Pattern Validation */
     if (vga->vram_ptr) {
@@ -1326,15 +1341,21 @@ static void nv34m_realize(PCIDevice *dev, Error **errp)
     pci_set_word(dev->config + PCI_COMMAND,
                  PCI_COMMAND_IO | PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER);
 
-    /* Toshiba Portege M200 Subsystem Vendor / Device IDs (1179:0001) */
+    /* Physical M200 NV34M subsystem ID: Toshiba 1179:0010. */
     pci_set_word(dev->config + PCI_SUBSYSTEM_VENDOR_ID, 0x1179);
-    pci_set_word(dev->config + PCI_SUBSYSTEM_ID, 0x0001);
+    pci_set_word(dev->config + PCI_SUBSYSTEM_ID, 0x0010);
 
-    /*
-     * PCI Config 0x64: Toshiba M200 Mobile Flat Panel Strap ID (0x03 = SXGA+ 1400x1050 / Poly-Si TFT).
-     * Checked by NVIDIA VBIOS VBE/FP 4F14h Subfunction 8Ch (handler at 0xAB21 via 0x5AE2/0x17E3).
-     */
-    pci_set_long(dev->config + 0x64, 0x00000003);
+    /* Physical NV34M capability chain: PM at 60h -> AGP at 44h. */
+    if (pci_add_capability(dev, PCI_CAP_ID_AGP, 0x44, 12, errp) < 0) {
+        return;
+    }
+    pci_set_word(dev->config + 0x46, 0x0030);
+    pci_set_long(dev->config + 0x48, NV34M_AGP_STATUS);
+    pci_set_long(dev->wmask + 0x4c, NV34M_AGP_COMMAND_WMASK);
+    if (pci_pm_init(dev, 0x60, errp) < 0) {
+        return;
+    }
+    pci_set_word(dev->config + 0x62, 0x0002);
 
     /* Interrupt routing */
     pci_config_set_interrupt_pin(dev->config, 1); /* Pin A */

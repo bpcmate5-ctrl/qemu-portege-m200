@@ -35,6 +35,9 @@ struct ICH4MLPCState {
     APMState apm;
     ICH4MLPCPMRegs pm;
 
+    /* Function 3 may be hidden while its BIOS-only SMBus decode remains. */
+    PCIDevice *smbus_pci_dev;
+
     uint32_t sci_level; /* track sci level */
     uint8_t sci_gsi;
 
@@ -119,9 +122,27 @@ struct ICH4MLPCState {
 #define ICH4M_PMIO_PM1_EN                0x02
 #define ICH4M_PMIO_PM1_CNT               0x04
 #define ICH4M_PMIO_PM1_TMR               0x08
-#define ICH4M_PMIO_GPE0_STS              0x20
-#define ICH4M_PMIO_GPE0_EN               0x28
-#define ICH4M_PMIO_GPE0_LEN              4
+#define ICH4M_PMIO_PM2_CNT               0x20
+#define ICH4M_PMIO_GPE0_STS              0x28
+#define ICH4M_PMIO_GPE0_EN               0x2c
+#define ICH4M_PMIO_GPE0_LEN              8
+#define ICH4M_PMIO_SMI_EN                0x30
+#define ICH4M_PMIO_SMI_STS               0x34
+#define ICH4M_PMIO_SMI_EN_GBL_SMI_EN     (1U << 0)
+#define ICH4M_PMIO_SMI_EN_APMC_EN        (1U << 5)
+#define ICH4M_PMIO_SMI_EN_PERIODIC_EN    (1U << 14)
+#define ICH4M_PMIO_SMI_STS_APM_STS       (1U << 5)
+#define ICH4M_PMIO_SMI_STS_PERIODIC_STS  (1U << 14)
+
+#define ICH4M_LPC_GEN_PMCON_1             0xa0
+#define ICH4M_LPC_FUNC_DIS                 0xf2
+#define ICH4M_LPC_FUNC_DIS_SMB_FOR_BIOS    (1U << 0)
+#define ICH4M_LPC_FUNC_DIS_SMBUS           (1U << 3)
+
+void ich4m_lpc_set_smbus_device(ICH4MLPCState *lpc, PCIDevice *smbus);
+bool ich4m_lpc_smbus_for_bios_enabled(const ICH4MLPCState *lpc);
+
+void ich4m_generate_smi(void);
 
 /* FADT ACPI_ENABLE/ACPI_DISABLE */
 #define ICH4M_APM_ACPI_ENABLE            0x2

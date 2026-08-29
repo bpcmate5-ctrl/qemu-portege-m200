@@ -31,6 +31,38 @@ static void pm_tmr_timer(ACPIREGS *ar)
     acpi_update_sci(&s->acpi_regs, s->irq);
 }
 
+static void ich4m_pm_periodic_timer_expired(void *opaque)
+{
+    ICH4MLPCPMRegs *pm = opaque;
+    pm->smi_sts |= ICH4M_PMIO_SMI_STS_PERIODIC_STS;
+    if ((pm->smi_en & (ICH4M_PMIO_SMI_EN_GBL_SMI_EN |
+                       ICH4M_PMIO_SMI_EN_PERIODIC_EN)) ==
+        (ICH4M_PMIO_SMI_EN_GBL_SMI_EN |
+         ICH4M_PMIO_SMI_EN_PERIODIC_EN)) {
+        if (getenv("M200_SMI_TRACE")) {
+            fprintf(stderr,
+                    "[ICH4M PERIODIC SMI] EN=%08x STS=%08x assert=1\n",
+                    pm->smi_en, pm->smi_sts);
+        }
+        ich4m_generate_smi();
+    }
+    ich4m_pm_update_periodic_timer(pm);
+}
+
+void ich4m_pm_update_periodic_timer(ICH4MLPCPMRegs *pm)
+{
+    ICH4MLPCState *lpc = container_of(pm, ICH4MLPCState, pm);
+    unsigned sel = pci_get_word(lpc->d.config + ICH4M_LPC_GEN_PMCON_1) & 3;
+    int64_t period_ns = 8LL * (1 << (3 - sel)) * NANOSECONDS_PER_SECOND;
+
+    if (pm->smi_en & ICH4M_PMIO_SMI_EN_PERIODIC_EN) {
+        timer_mod(pm->periodic_timer,
+                  qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + period_ns);
+    } else {
+        timer_del(pm->periodic_timer);
+    }
+}
+
 /* apm_ctrl_changed is handled in lpc_ich4m.c */
 
 /* This function is not used - ich4m_pm_iospace_update is used instead */
@@ -59,6 +91,60 @@ static const MemoryRegionOps ich4m_gpe_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
+static uint64_t ich4m_smi_read(void *opaque, hwaddr addr, unsigned width)
+{
+    ICH4MLPCPMRegs *pm = opaque;
+    uint32_t value;
+    unsigned shift;
+
+    if (addr < 4 && addr + width <= 4) {
+        value = pm->smi_en;
+        shift = addr * 8;
+    } else if (addr >= 4 && addr + width <= 8) {
+        value = pm->smi_sts;
+        shift = (addr - 4) * 8;
+    } else {
+        return 0;
+    }
+
+    return extract64(value, shift, width * 8);
+}
+
+static void ich4m_smi_write(void *opaque, hwaddr addr, uint64_t val,
+                            unsigned width)
+{
+    ICH4MLPCPMRegs *pm = opaque;
+    uint32_t mask;
+    unsigned shift;
+
+    if (addr < 4 && addr + width <= 4) {
+        shift = addr * 8;
+        mask = MAKE_64BIT_MASK(shift, width * 8);
+        pm->smi_en = (pm->smi_en & ~mask) | (((uint32_t)val << shift) & mask);
+        ich4m_pm_update_periodic_timer(pm);
+    } else if (addr >= 4 && addr + width <= 8) {
+        /* SMI_STS is write-one-to-clear. */
+        shift = (addr - 4) * 8;
+        mask = MAKE_64BIT_MASK(shift, width * 8);
+        pm->smi_sts &= ~(((uint32_t)val << shift) & mask);
+    }
+    if (getenv("M200_SMI_TRACE")) {
+        fprintf(stderr, "[ICH4M SMI REG] off=%02" HWADDR_PRIx
+                " write=%08" PRIx64 " EN=%08x STS=%08x\n",
+                addr + ICH4M_PMIO_SMI_EN, val, pm->smi_en, pm->smi_sts);
+    }
+}
+
+static const MemoryRegionOps ich4m_smi_ops = {
+    .read = ich4m_smi_read,
+    .write = ich4m_smi_write,
+    .valid.min_access_size = 1,
+    .valid.max_access_size = 4,
+    .impl.min_access_size = 1,
+    .impl.max_access_size = 4,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
 static int ich4m_pm_post_load(void *opaque, int version_id)
 {
     ICH4MLPCPMRegs *pm = opaque;
@@ -82,7 +168,7 @@ static int ich4m_pm_post_load(void *opaque, int version_id)
 
 const VMStateDescription vmstate_ich4m_pm = {
     .name = "ich4m_pm",
-    .version_id = 1,
+    .version_id = 2,
     .minimum_version_id = 1,
     .post_load = ich4m_pm_post_load,
     .fields = (const VMStateField[]) {
@@ -94,12 +180,26 @@ const VMStateDescription vmstate_ich4m_pm = {
         VMSTATE_GPE_ARRAY(acpi_regs.gpe.sts, ICH4MLPCPMRegs),
         VMSTATE_GPE_ARRAY(acpi_regs.gpe.en, ICH4MLPCPMRegs),
         VMSTATE_UINT32(pm_io_base, ICH4MLPCPMRegs),
+        VMSTATE_UINT32(smi_en, ICH4MLPCPMRegs),
+        VMSTATE_UINT32(smi_sts, ICH4MLPCPMRegs),
+        VMSTATE_TIMER_PTR_V(periodic_timer, ICH4MLPCPMRegs, 2),
         VMSTATE_UINT8(disable_s3, ICH4MLPCPMRegs),
         VMSTATE_UINT8(disable_s4, ICH4MLPCPMRegs),
         VMSTATE_UINT8(s4_val, ICH4MLPCPMRegs),
         VMSTATE_END_OF_LIST()
     }
 };
+
+void ich4m_pm_reset(ICH4MLPCPMRegs *pm)
+{
+    acpi_pm1_evt_reset(&pm->acpi_regs);
+    acpi_pm1_cnt_reset(&pm->acpi_regs);
+    acpi_pm_tmr_reset(&pm->acpi_regs);
+    acpi_gpe_reset(&pm->acpi_regs);
+    pm->smi_en = 0x00000002;
+    pm->smi_sts = 0;
+    timer_del(pm->periodic_timer);
+}
 
 void ich4m_pm_iospace_update(ICH4MLPCPMRegs *pm, uint32_t pm_io_base)
 {
@@ -136,6 +236,10 @@ void ich4m_pm_init(PCIDevice *lpc_pci, ICH4MLPCPMRegs *pm, qemu_irq sci_irq)
                           "ich4m-gpe", ICH4M_PMIO_GPE0_LEN);
     memory_region_add_subregion(&pm->io, ICH4M_PMIO_GPE0_STS, &pm->io_gpe);
 
+    memory_region_init_io(&pm->io_smi, OBJECT(lpc_pci), &ich4m_smi_ops, pm,
+                          "ich4m-smi", 8);
+    memory_region_add_subregion(&pm->io, ICH4M_PMIO_SMI_EN, &pm->io_smi);
+
     pm->irq = sci_irq;
 
     acpi_pm_tmr_init(&pm->acpi_regs, pm_tmr_timer, &pm->io);
@@ -143,6 +247,9 @@ void ich4m_pm_init(PCIDevice *lpc_pci, ICH4MLPCPMRegs *pm, qemu_irq sci_irq)
     acpi_pm1_cnt_init(&pm->acpi_regs, &pm->io, pm->disable_s3, pm->disable_s4,
                      pm->s4_val, true);
     acpi_gpe_init(&pm->acpi_regs, ICH4M_PMIO_GPE0_LEN);
+    pm->periodic_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
+                                      ich4m_pm_periodic_timer_expired, pm);
+    ich4m_pm_reset(pm);
 }
 
 void ich4m_pm_add_properties(Object *obj, ICH4MLPCPMRegs *pm)
@@ -162,4 +269,3 @@ void ich4m_pm_add_properties(Object *obj, ICH4MLPCPMRegs *pm)
     object_property_add_uint8_ptr(obj, ACPI_PM_PROP_S4_VAL,
                                   &pm->s4_val, OBJ_PROP_FLAG_READWRITE);
 }
-

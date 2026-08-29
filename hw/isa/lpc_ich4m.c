@@ -35,6 +35,15 @@
 /*****************************************************************************/
 /* ICH4M LPC PCI to ISA bridge */
 
+void ich4m_generate_smi(void)
+{
+    CPUState *cpu = current_cpu ? current_cpu : first_cpu;
+
+    if (cpu) {
+        cpu_interrupt(cpu, CPU_INTERRUPT_SMI);
+    }
+}
+
 static void ich4m_lpc_rout(uint8_t pirq_rout, int *pic_irq, int *pic_dis)
 {
     *pic_irq = pirq_rout & ICH4M_LPC_PIRQ_ROUT_MASK;
@@ -157,6 +166,7 @@ static int ich4m_lpc_map_irq(PCIDevice *pci_dev, int intx)
 static void ich4m_apm_ctrl_changed(uint32_t val, void *arg)
 {
     ICH4MLPCState *lpc = arg;
+    CPUState *cpu;
 
     /* ACPI specs 3.0, 4.7.2.5 */
     acpi_pm1_cnt_update(&lpc->pm.acpi_regs,
@@ -164,6 +174,25 @@ static void ich4m_apm_ctrl_changed(uint32_t val, void *arg)
                         val == ICH4M_APM_ACPI_DISABLE);
     if (val == ICH4M_APM_ACPI_ENABLE || val == ICH4M_APM_ACPI_DISABLE) {
         return;
+    }
+
+    lpc->pm.smi_sts |= ICH4M_PMIO_SMI_STS_APM_STS;
+    if ((lpc->pm.smi_en & (ICH4M_PMIO_SMI_EN_GBL_SMI_EN |
+                           ICH4M_PMIO_SMI_EN_APMC_EN)) ==
+        (ICH4M_PMIO_SMI_EN_GBL_SMI_EN | ICH4M_PMIO_SMI_EN_APMC_EN)) {
+        cpu = current_cpu ? current_cpu : first_cpu;
+        if (getenv("M200_SMI_TRACE")) {
+            fprintf(stderr,
+                    "[ICH4M APMC SMI] cmd=%02x EN=%08x STS=%08x assert=%d\n",
+                    val, lpc->pm.smi_en, lpc->pm.smi_sts, cpu != NULL);
+        }
+        if (cpu) {
+            cpu_interrupt(cpu, CPU_INTERRUPT_SMI);
+        }
+    } else if (getenv("M200_SMI_TRACE")) {
+        fprintf(stderr,
+                "[ICH4M APMC SMI] cmd=%02x EN=%08x STS=%08x disabled\n",
+                val, lpc->pm.smi_en, lpc->pm.smi_sts);
     }
 }
 
@@ -198,6 +227,7 @@ static void ich4m_lpc_config_write(PCIDevice *d,
                                    uint32_t addr, uint32_t val, int len)
 {
     ICH4MLPCState *lpc = ICH4M_LPC_DEVICE(d);
+    uint16_t old_func_dis = pci_get_word(d->config + ICH4M_LPC_FUNC_DIS);
 
     pci_default_write_config(d, addr, val, len);
     if (ranges_overlap(addr, len, ICH4M_LPC_PMBASE, 4) ||
@@ -208,6 +238,47 @@ static void ich4m_lpc_config_write(PCIDevice *d,
         ranges_overlap(addr, len, ICH4M_LPC_PIRQE_ROUT, 4)) {
         pci_bus_fire_intx_routing_notifier(pci_get_bus(&lpc->d));
     }
+    if (ranges_overlap(addr, len, ICH4M_LPC_GEN_PMCON_1, 2)) {
+        ich4m_pm_update_periodic_timer(&lpc->pm);
+    }
+    if (ranges_overlap(addr, len, ICH4M_LPC_FUNC_DIS, 2)) {
+        uint16_t func_dis = pci_get_word(d->config + ICH4M_LPC_FUNC_DIS);
+
+        if (lpc->smbus_pci_dev) {
+            pci_set_enabled(lpc->smbus_pci_dev,
+                            !(func_dis & ICH4M_LPC_FUNC_DIS_SMBUS));
+        }
+        if (getenv("M200_FUNC_DIS_TRACE") && old_func_dis != func_dis) {
+            fprintf(stderr,
+                    "[M200 FUNC_DIS] %04x -> %04x SMBus PCI=%s BIOS_IO=%s\n",
+                    old_func_dis, func_dis,
+                    func_dis & ICH4M_LPC_FUNC_DIS_SMBUS ? "hidden" : "visible",
+                    func_dis & ICH4M_LPC_FUNC_DIS_SMB_FOR_BIOS ?
+                    "enabled" : "disabled");
+        }
+    }
+}
+
+static void ich4m_lpc_update_func_dis(ICH4MLPCState *lpc)
+{
+    uint16_t func_dis = pci_get_word(lpc->d.config + ICH4M_LPC_FUNC_DIS);
+
+    if (lpc->smbus_pci_dev) {
+        pci_set_enabled(lpc->smbus_pci_dev,
+                        !(func_dis & ICH4M_LPC_FUNC_DIS_SMBUS));
+    }
+}
+
+void ich4m_lpc_set_smbus_device(ICH4MLPCState *lpc, PCIDevice *smbus)
+{
+    lpc->smbus_pci_dev = smbus;
+    ich4m_lpc_update_func_dis(lpc);
+}
+
+bool ich4m_lpc_smbus_for_bios_enabled(const ICH4MLPCState *lpc)
+{
+    return pci_get_word(lpc->d.config + ICH4M_LPC_FUNC_DIS) &
+           ICH4M_LPC_FUNC_DIS_SMB_FOR_BIOS;
 }
 
 static void ich4m_lpc_reset(DeviceState *qdev)
@@ -216,14 +287,16 @@ static void ich4m_lpc_reset(DeviceState *qdev)
     ICH4MLPCState *lpc = ICH4M_LPC_DEVICE(d);
     int i;
 
-    /* Initialize PIRQ routing matching Toshiba Portégé M200 dump */
-    for (i = 0; i < 4; i++) {
-        pci_set_byte(d->config + ICH4M_LPC_PIRQA_ROUT + i, 0x0b); /* IRQ 11 */
+    /* PIRQ routes are disabled at reset; firmware assigns board routing. */
+    for (i = 0; i < ICH4M_LPC_NB_PIRQS; i++) {
+        if (i < 4) {
+            pci_set_byte(d->config + ICH4M_LPC_PIRQA_ROUT + i,
+                         ICH4M_LPC_PIRQ_ROUT_DEFAULT);
+        } else {
+            pci_set_byte(d->config + ICH4M_LPC_PIRQE_ROUT + i - 4,
+                         ICH4M_LPC_PIRQ_ROUT_DEFAULT);
+        }
     }
-    pci_set_byte(d->config + ICH4M_LPC_PIRQE_ROUT, 0x0b);
-    pci_set_byte(d->config + ICH4M_LPC_PIRQF_ROUT, 0x80); /* disabled */
-    pci_set_byte(d->config + ICH4M_LPC_PIRQG_ROUT, 0x0a); /* IRQ 10 */
-    pci_set_byte(d->config + ICH4M_LPC_PIRQH_ROUT, 0x0b); /* IRQ 11 */
 
     /* Reset PMBASE */
     pci_set_long(d->config + ICH4M_LPC_PMBASE, ICH4M_LPC_PMBASE_DEFAULT);
@@ -232,6 +305,10 @@ static void ich4m_lpc_reset(DeviceState *qdev)
 
     /* Reset Control Register */
     lpc->rst_cnt = 0;
+
+    ich4m_pm_reset(&lpc->pm);
+
+    ich4m_lpc_update_func_dis(lpc);
 
     ich4m_lpc_pmbase_sci_update(lpc);
 }
@@ -269,6 +346,7 @@ static int ich4m_lpc_post_load(void *opaque, int version_id)
     ICH4MLPCState *lpc = opaque;
 
     ich4m_lpc_pmbase_sci_update(lpc);
+    ich4m_lpc_update_func_dis(lpc);
     return 0;
 }
 
@@ -338,6 +416,9 @@ static void ich4m_lpc_realize(PCIDevice *d, Error **errp)
                  ICH4M_LPC_PMBASE_BASE_ADDRESS_MASK);
     pci_set_byte(d->wmask + ICH4M_LPC_ACPI_CTRL, 0xff);
     pci_set_long(d->wmask + ICH4M_LPC_GPIOBASE, 0xffc0);
+    pci_set_word(d->wmask + ICH4M_LPC_FUNC_DIS,
+                 ICH4M_LPC_FUNC_DIS_SMB_FOR_BIOS |
+                 ICH4M_LPC_FUNC_DIS_SMBUS);
 
     /* Setup PIRQ write masks */
     memset(d->wmask + ICH4M_LPC_PIRQA_ROUT, 0xff, 4);
@@ -421,4 +502,3 @@ static void ich4m_lpc_register_types(void)
 }
 
 type_init(ich4m_lpc_register_types);
-

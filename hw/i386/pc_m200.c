@@ -34,19 +34,22 @@
 #include "hw/acpi/acpi.h"
 #include "hw/usb/usb.h"
 #include "hw/i2c/smbus_eeprom.h"
+#include "hw/i2c/smbus_master.h"
+#include "hw/i2c/m200_smbus.h"
 #include "hw/southbridge/ich9.h"
 #include "hw/display/nv34m.h"
 #include "hw/char/serial-isa.h"
 #include "chardev/char.h"
 #include "system/hw_accel.h"
 #include "qemu/datadir.h"
+#include "qemu/timer.h"
 #include "hw/core/loader.h"
 
 /* Toshiba Portege M200 Motherboard Straps & Hardware ID (Port 0x85) */
 static uint8_t toshiba_m200_port85 = 0x00;
 static uint8_t *toshiba_system_ram = NULL;
 static MemoryRegion *g_shadow_ram_f0000 = NULL;
-static MemoryRegion *g_smram_tseg = NULL;
+static MemoryRegion *g_high_smram = NULL;
 
 uint32_t pc_m200_get_cpu_eip(void)
 {
@@ -58,12 +61,18 @@ uint32_t pc_m200_get_cpu_eip(void)
     return 0;
 }
 
-void *pc_m200_get_tseg_ptr(void)
+void *pc_m200_get_high_smram_ptr(void)
 {
-    if (g_smram_tseg) {
-        return memory_region_get_ram_ptr(g_smram_tseg);
+    if (g_high_smram) {
+        return memory_region_get_ram_ptr(g_high_smram);
     }
     return NULL;
+}
+
+/* Compatibility for the existing passive M200 translator instrumentation. */
+void *pc_m200_get_tseg_ptr(void)
+{
+    return pc_m200_get_high_smram_ptr();
 }
 
 static uint64_t toshiba_m200_io_read(void *opaque, hwaddr addr, unsigned size)
@@ -124,6 +133,7 @@ typedef struct ToshibaAcpiECState {
 static uint64_t toshiba_acpi_ec_data_read(void *opaque, hwaddr addr, unsigned size)
 {
     ToshibaAcpiECState *ec = opaque;
+
     ec->status &= ~0x01; /* Clear OBF */
     return 0x00; /* EC Status / Power Query Success (0x00) */
 }
@@ -131,19 +141,21 @@ static uint64_t toshiba_acpi_ec_data_read(void *opaque, hwaddr addr, unsigned si
 static void toshiba_acpi_ec_data_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
     ToshibaAcpiECState *ec = opaque;
+
     ec->status |= 0x01; /* Set OBF (Output Buffer Full) */
 }
 
 static uint64_t toshiba_acpi_ec_cmd_read(void *opaque, hwaddr addr, unsigned size)
 {
     ToshibaAcpiECState *ec = opaque;
-    return (ec->status & 0x01) | 0x70; /* 0x70 = System Power ON, AC connected, Lid Open | OBF */
+    return (ec->status & 0x01) | 0x70;
 }
 
 static void toshiba_acpi_ec_cmd_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
     ToshibaAcpiECState *ec = opaque;
     ec->cmd = val & 0xff;
+
     ec->status |= 0x01; /* Set OBF (Output Buffer Full) */
 }
 
@@ -151,6 +163,7 @@ static void toshiba_acpi_ec_cmd_write(void *opaque, hwaddr addr, uint64_t val, u
 typedef struct ToshibaDPortState {
     uint8_t byte_count;
     uint16_t current_code;
+    uint64_t sequence;
 } ToshibaDPortState;
 
 static const char *dport_code_name(uint16_t code)
@@ -158,7 +171,11 @@ static const char *dport_code_name(uint16_t code)
     switch (code) {
     case 0xF000: return "Early init (A20, PIT CH0, BootBlock Checksum)";
     case 0xF001: return "EC/KBC check";
-    case 0xF002: return "Security controller init";
+    case 0xF002: return "Security controller initialization";
+    case 0xF003: return "BIOS rewrite request processing";
+    case 0xF004: return "BIOS rewrite request processing";
+    case 0xF005: return "BIOS rewrite request processing";
+    case 0xF006: return "BIOS signature check";
     case 0xF007: return "BIOS Rewrite / Shift to System BIOS IRT";
     case 0xF008: return "Switch ROM BIOS to RAM BIOS";
     case 0xF009: return "Key/rewrite loop";
@@ -192,7 +209,7 @@ static const char *dport_code_name(uint16_t code)
     case 0xF161: return "ERROR: PIT error";
     case 0xF162: return "ERROR: PIC #1 error";
     case 0xF163: return "ERROR: PIC #2 error";
-    case 0xFFFF: return "Boot complete (Normal status)";
+    case 0xFFFF: return "NORMAL D-port STATUS";
     default: return "NoteBIOS POST step";
     }
 }
@@ -214,11 +231,50 @@ static void toshiba_dport_write(void *opaque, hwaddr addr, uint64_t val, unsigne
     ToshibaDPortState *dp = opaque;
     if (addr == 0) { /* THR - Transmit Holding Register */
         if (dp->byte_count == 0) {
-            dp->current_code = (val & 0xff);
-            dp->byte_count = 1;
+            uint8_t byte = val & 0xff;
+
+            /* PJ2000 checkpoint records are class byte F0/F1/FF plus code. */
+            if (byte == 0xf0 || byte == 0xf1 || byte == 0xff) {
+                dp->current_code = byte;
+                dp->byte_count = 1;
+            }
         } else {
             dp->current_code = (dp->current_code << 8) | (val & 0xff);
             dp->byte_count = 0;
+            CPUState *cpu = first_cpu;
+            if (cpu) {
+                X86CPU *x86_cpu = X86_CPU(cpu);
+                CPUX86State *env;
+
+                cpu_synchronize_state(cpu);
+                env = &x86_cpu->env;
+                fprintf(stderr,
+                        "[M200-CHK #%04" PRIu64 "] %04X "
+                        "CS:EIP=%04x:%08x phys=%08x "
+                        "EAX=%08x EBX=%08x ECX=%08x EDX=%08x "
+                        "ESI=%08x EDI=%08x ESP=%08x EBP=%08x "
+                        "DI=%04x BH=%02x BL=%02x "
+                        "CS=%04x SS=%04x DS=%04x ES=%04x FS=%04x GS=%04x "
+                        "CR0=%08x EFLAGS=%08x\n",
+                        ++dp->sequence, dp->current_code,
+                        env->segs[R_CS].selector, (uint32_t)env->eip,
+                        (uint32_t)(env->segs[R_CS].base + env->eip),
+                        (uint32_t)env->regs[R_EAX],
+                        (uint32_t)env->regs[R_EBX],
+                        (uint32_t)env->regs[R_ECX],
+                        (uint32_t)env->regs[R_EDX],
+                        (uint32_t)env->regs[R_ESI],
+                        (uint32_t)env->regs[R_EDI],
+                        (uint32_t)env->regs[R_ESP],
+                        (uint32_t)env->regs[R_EBP],
+                        (uint16_t)env->regs[R_EDI],
+                        (uint8_t)(env->regs[R_EBX] >> 8),
+                        (uint8_t)env->regs[R_EBX],
+                        env->segs[R_CS].selector, env->segs[R_SS].selector,
+                        env->segs[R_DS].selector, env->segs[R_ES].selector,
+                        env->segs[R_FS].selector, env->segs[R_GS].selector,
+                        (uint32_t)env->cr[0], (uint32_t)env->eflags);
+            }
             if (dp->current_code == 0xF113) {
                 fprintf(stderr, "\n============================================================\n"
                                 "   ENTERING F113: DISP_LOGO (Authentic Toshiba Splash Mode)\n"
@@ -249,112 +305,6 @@ static const MemoryRegionOps toshiba_acpi_ec_cmd_ops = {
     .read = toshiba_acpi_ec_cmd_read,
     .write = toshiba_acpi_ec_cmd_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
-};
-
-/* Intel ICH4-M ACPI Power Management Timer (3.579545 MHz counter on Port 0xD808 / ACPI Base 0xD800) */
-static uint32_t toshiba_pm_timer_val = 0;
-
-static uint64_t toshiba_acpi_pm_read(void *opaque, hwaddr addr, unsigned size)
-{
-    if (addr >= 0x08 && addr < 0x0c) {
-        toshiba_pm_timer_val = (toshiba_pm_timer_val + 50000) & 0x00ffffff;
-        return toshiba_pm_timer_val;
-    }
-    return 0;
-}
-
-static void toshiba_acpi_pm_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
-{
-}
-
-static const MemoryRegionOps toshiba_acpi_pm_ops = {
-    .read = toshiba_acpi_pm_read,
-    .write = toshiba_acpi_pm_write,
-    .endianness = DEVICE_LITTLE_ENDIAN,
-    .impl = {
-        .min_access_size = 1,
-        .max_access_size = 4,
-    },
-};
-
-
-
-static uint64_t toshiba_lcd_d800_read(void *opaque, hwaddr addr, unsigned size)
-{
-    switch (addr) {
-    case 0x00: return 0x0001; /* LCD Enabled */
-    case 0x02: return 0x0000; /* Status Ready */
-    case 0x04: return 0x0002; /* Display Controller Ready */
-    case 0x08: {
-        /* Intel ICH4-M ACPI Power Management Timer (3.579545 MHz counter on Port 0xD808) */
-        uint64_t ticks = (qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) * 3579545ULL) / 1000000000ULL;
-        return (uint32_t)(ticks & 0x00ffffff);
-    }
-    case 0x2c: return 0x0000; /* LCD Timing Status Ready */
-    case 0x2e: return 0x2000; /* Backlight Inverter ON */
-    case 0x30: return 0x4000; /* Select Bay IDE Power ON */
-    case 0x38: return 0x0000; /* Panel Frequency Ready */
-    case 0x68: return 0x0800; /* Panel Resolution Ready (1400x1050 SXGA+) */
-    case 0x80: return 0x0002; /* Toshiba Video BitBLT / DMA Engine Ready */
-    default: return 0x0000;
-    }
-}
-
-static void toshiba_lcd_d800_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
-{
-    if (toshiba_system_ram) {
-        nv34m_vga_sync_ram_buffer(toshiba_system_ram);
-    }
-}
-
-static const MemoryRegionOps toshiba_lcd_d800_ops = {
-    .read = toshiba_lcd_d800_read,
-    .write = toshiba_lcd_d800_write,
-    .endianness = DEVICE_LITTLE_ENDIAN,
-    .impl = {
-        .min_access_size = 1,
-        .max_access_size = 4,
-    },
-};
-
-/* Intel ICH4-M APM / SMI Software Control (Ports 0xB2 / 0xB3) */
-static uint64_t toshiba_apmc_read(void *opaque, hwaddr addr, unsigned size)
-{
-    return 0x00;
-}
-
-static void toshiba_apmc_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
-{
-    CPUState *cpu = first_cpu;
-    if (!cpu) return;
-    cpu_synchronize_state(cpu);
-    X86CPU *x86_cpu = X86_CPU(cpu);
-    CPUX86State *env = &x86_cpu->env;
-
-    uint8_t cmd = val & 0xff;
-    if (g_smram_tseg) {
-        uint8_t *tseg_ptr = (uint8_t *)memory_region_get_ram_ptr(g_smram_tseg);
-        tseg_ptr[0xba140] |= 0x0a; /* 0x08 = PM Unit Ready, 0x02 = PM Command Complete */
-        tseg_ptr[0xa140] |= 0x0a;
-    }
-
-    if (cmd == 0xc1 || cmd == 0x4d || cmd == 0x16 || cmd == 0xfe || cmd == 0xff) {
-        /* Toshiba SMM Signature 'TX\x00\x01' in EAX */
-        env->regs[R_EAX] = 0x74580001;
-        env->regs[R_EBX] = 0x00000000;
-        env->regs[R_ECX] = 0x00000000;
-        cpu_loop_exit(cpu);
-    }
-}
-
-static const MemoryRegionOps toshiba_apmc_ops = {
-    .read = toshiba_apmc_read,
-    .write = toshiba_apmc_write,
-    .endianness = DEVICE_LITTLE_ENDIAN,
-    .impl = {
-        .min_access_size = 1,
-        .max_access_size = 2,
-    },
 };
 
 /* Port 0x64 KBC Status (Bit 2 = SYSF: System POST Self-Test Passed, Normal Boot) */
@@ -742,12 +692,129 @@ static const MemoryRegionOps toshiba_vga_int10_ops = {
 
 /* Intel ICH4-M SMBus Controller (Base 0xD880) & DDR SDRAM SPD EEPROM */
 typedef struct ToshibaSMBusState {
+    ICH4MLPCState *lpc;
+    I2CBus *bus;
+    QEMUTimer *transaction_timer;
     uint8_t hst_sts;
     uint8_t hst_cnt;
     uint8_t hst_cmd;
     uint8_t xmit_slva;
     uint8_t hst_d0;
+    uint8_t hst_d1;
+    uint8_t block_data;
+    uint8_t active_cnt;
+    uint8_t active_cmd;
+    uint8_t active_slva;
+    uint8_t active_d0;
+    uint8_t active_d1;
+    uint8_t block_data_bytes[32];
+    uint8_t active_block_data[32];
+    uint8_t block_index;
+    uint8_t active_block_len;
+    bool transaction_pending;
+    bool busy_observed;
+    bool trace;
+    int64_t scheduled_ns;
 } ToshibaSMBusState;
+
+#define M200_SMB_STS_HOST_BUSY 0x01
+#define M200_SMB_STS_INTR      0x02
+#define M200_SMB_STS_DEV_ERR   0x04
+#define M200_SMB_STS_BUS_ERR   0x08
+#define M200_SMB_STS_FAILED    0x10
+#define M200_SMB_CNT_INTREN     0x01
+#define M200_SMB_CNT_KILL       0x02
+#define M200_SMB_CNT_START      0x40
+
+/*
+ * ICH4-M is an SMBus 2.0 host.  Model one standard-mode clock as 10 us.
+ * An unclaimed address completes after START hold, the address byte plus
+ * ACK/NACK clock, and STOP setup: 4 + 9*10 + 4 = 98 us.  This is distinct
+ * from the documented 25--35 ms clock-held/device timeout.
+ */
+#define M200_SMBUS_CLOCK_NS       10000ULL
+#define M200_SMBUS_START_HOLD_NS   4000ULL
+#define M200_SMBUS_STOP_SETUP_NS   4000ULL
+
+static const uint8_t ddr_spd_dimm0[128];
+
+static uint64_t m200_smbus_wire_time_ns(unsigned bytes)
+{
+    return M200_SMBUS_START_HOLD_NS +
+           bytes * 9 * M200_SMBUS_CLOCK_NS +
+           M200_SMBUS_STOP_SETUP_NS;
+}
+
+static void m200_smbus_transaction_complete(void *opaque)
+{
+    ToshibaSMBusState *s = opaque;
+    uint8_t dev_addr = s->active_slva >> 1;
+    int64_t now_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+
+    if (!s->transaction_pending) {
+        return;
+    }
+    s->transaction_pending = false;
+    s->hst_sts &= ~M200_SMB_STS_HOST_BUSY;
+
+    int result = -1;
+    unsigned protocol = (s->active_cnt >> 2) & 7;
+    bool read = s->active_slva & 1;
+
+    switch (protocol) {
+    case 0: /* Quick */
+        result = smbus_quick_command(s->bus, dev_addr, read);
+        break;
+    case 1: /* Byte */
+        result = read ? smbus_receive_byte(s->bus, dev_addr) :
+                        smbus_send_byte(s->bus, dev_addr, s->active_cmd);
+        if (read && result >= 0) {
+            s->hst_d0 = result;
+        }
+        break;
+    case 2: /* Byte data */
+        result = read ? smbus_read_byte(s->bus, dev_addr, s->active_cmd) :
+                        smbus_write_byte(s->bus, dev_addr, s->active_cmd,
+                                         s->active_d0);
+        if (read && result >= 0) {
+            s->hst_d0 = result;
+        }
+        break;
+    case 3: /* Word data */
+        result = read ? smbus_read_word(s->bus, dev_addr, s->active_cmd) :
+                        smbus_write_word(s->bus, dev_addr, s->active_cmd,
+                                         s->active_d0 |
+                                         ((uint16_t)s->active_d1 << 8));
+        if (read && result >= 0) {
+            s->hst_d0 = result;
+            s->hst_d1 = result >> 8;
+        }
+        break;
+    case 5: /* Block */
+        if (!read) {
+            result = smbus_write_block(s->bus, dev_addr, s->active_cmd,
+                                       s->active_block_data,
+                                       s->active_block_len, true);
+        }
+        break;
+    default:
+        break;
+    }
+
+    if (result >= 0) {
+        s->hst_sts |= M200_SMB_STS_INTR;
+    } else {
+        /* Address NACK is reported as DEV_ERR, not as a bus timeout. */
+        s->hst_sts |= M200_SMB_STS_DEV_ERR;
+    }
+    if (getenv("M200_ICOUNT_TIMER_TRACE")) {
+        fprintf(stderr,
+                "[M200-ICOUNT-TIMER] SMBUS slva=%02x scheduled=%" PRId64
+                " actual=%" PRId64 " late=%" PRId64 "\n",
+                s->active_slva, s->scheduled_ns, now_ns,
+                now_ns - s->scheduled_ns);
+    }
+}
 
 static const uint8_t ddr_spd_dimm0[128] = {
     [0] = 0x80, /* 128 bytes */
@@ -788,9 +855,16 @@ static uint64_t toshiba_smbus_read(void *opaque, hwaddr addr, unsigned size)
 {
     ToshibaSMBusState *s = opaque;
     uint8_t val = 0;
+
+    if (!ich4m_lpc_smbus_for_bios_enabled(s->lpc)) {
+        return UINT64_MAX;
+    }
     switch (addr) {
     case 0x00: /* HST_STS */
         val = s->hst_sts;
+        if (val & M200_SMB_STS_HOST_BUSY) {
+            s->busy_observed = true;
+        }
         break;
     case 0x02: /* HST_CNT */
         val = s->hst_cnt;
@@ -804,35 +878,73 @@ static uint64_t toshiba_smbus_read(void *opaque, hwaddr addr, unsigned size)
     case 0x05: /* HST_D0 */
         val = s->hst_d0;
         break;
+    case 0x06: /* HST_D1 */
+        val = s->hst_d1;
+        break;
+    case 0x07: /* HOST_BLOCK_DB */
+        val = s->block_data;
+        break;
     default:
         val = 0;
         break;
     }
-    fprintf(stderr, ">>> [TOSHIBA SMBUS READ] Port 0x%04X -> 0x%02X\n", (unsigned)(0xD880 + addr), val);
+    if (s->trace) {
+        fprintf(stderr, ">>> [TOSHIBA SMBUS READ] Port 0x%04X -> 0x%02X\n",
+                (unsigned)(0xD880 + addr), val);
+    }
     return val;
 }
 
 static void toshiba_smbus_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
     ToshibaSMBusState *s = opaque;
-    fprintf(stderr, ">>> [TOSHIBA SMBUS WRITE] Port 0x%04X <- 0x%02X\n", (unsigned)(0xD880 + addr), (uint8_t)val);
+
+    if (!ich4m_lpc_smbus_for_bios_enabled(s->lpc)) {
+        return;
+    }
+    if (s->trace) {
+        fprintf(stderr, ">>> [TOSHIBA SMBUS WRITE] Port 0x%04X <- 0x%02X\n",
+                (unsigned)(0xD880 + addr), (uint8_t)val);
+    }
     switch (addr) {
     case 0x00: /* HST_STS (W1C) */
-        s->hst_sts &= ~(val & 0xff);
+        s->hst_sts &= ~(val & ~M200_SMB_STS_HOST_BUSY & 0xff);
         break;
     case 0x02: /* HST_CNT */
-        s->hst_cnt = val & 0xff;
-        if (val & 0x40) { /* START */
-            uint8_t dev_addr = s->xmit_slva >> 1;
-            if (dev_addr == 0x50) { /* DIMM 0 (Slave 0xA0/0xA1) */
-                uint8_t offset = s->hst_cmd & 0x7f;
-                s->hst_d0 = ddr_spd_dimm0[offset];
-                s->hst_sts = 0x02; /* INTR (Transaction Complete) */
-                fprintf(stderr, ">>> [TOSHIBA SMBUS] DIMM 0 Read SPD[0x%02X] = 0x%02X\n", offset, s->hst_d0);
-            } else {
-                s->hst_sts = 0x04; /* DEV_ERR (No device at address) */
-                fprintf(stderr, ">>> [TOSHIBA SMBUS] Slave 0x%02X (dev 0x%02X) NOT PRESENT\n", s->xmit_slva, dev_addr);
+        s->hst_cnt = val & ~M200_SMB_CNT_START & 0xff;
+        if (val & M200_SMB_CNT_KILL) {
+            if (s->transaction_pending) {
+                timer_del(s->transaction_timer);
+                s->transaction_pending = false;
+                s->hst_sts &= ~M200_SMB_STS_HOST_BUSY;
+                s->hst_sts |= M200_SMB_STS_FAILED;
             }
+        } else if ((val & M200_SMB_CNT_START) &&
+                   !(s->hst_sts & M200_SMB_STS_HOST_BUSY)) {
+            unsigned wire_bytes = 1;
+
+            s->active_cnt = val;
+            s->active_cmd = s->hst_cmd;
+            s->active_slva = s->xmit_slva;
+            s->active_d0 = s->hst_d0;
+            s->active_d1 = s->hst_d1;
+            s->active_block_len = MIN(s->hst_d0, (uint8_t)32);
+            memcpy(s->active_block_data, s->block_data_bytes,
+                   s->active_block_len);
+            s->transaction_pending = true;
+            s->busy_observed = false;
+            s->hst_sts |= M200_SMB_STS_HOST_BUSY;
+            switch ((val >> 2) & 7) {
+            case 0: wire_bytes = 1; break; /* quick */
+            case 1: wire_bytes = 2; break; /* byte */
+            case 2: wire_bytes = 3; break; /* byte data */
+            case 3: wire_bytes = 4; break; /* word data */
+            case 5: wire_bytes = 3 + MIN(s->hst_d0, 32); break;
+            default: wire_bytes = 4; break;
+            }
+            s->scheduled_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+                              m200_smbus_wire_time_ns(wire_bytes);
+            timer_mod(s->transaction_timer, s->scheduled_ns);
         }
         break;
     case 0x03: /* HST_CMD */
@@ -843,6 +955,16 @@ static void toshiba_smbus_write(void *opaque, hwaddr addr, uint64_t val, unsigne
         break;
     case 0x05: /* HST_D0 */
         s->hst_d0 = val & 0xff;
+        s->block_index = 0;
+        break;
+    case 0x06: /* HST_D1 */
+        s->hst_d1 = val & 0xff;
+        break;
+    case 0x07: /* HOST_BLOCK_DB */
+        s->block_data = val & 0xff;
+        if (s->block_index < ARRAY_SIZE(s->block_data_bytes)) {
+            s->block_data_bytes[s->block_index++] = val;
+        }
         break;
     }
 }
@@ -915,36 +1037,26 @@ static void pc_m200_reset_handler(void *opaque)
                 memcpy(c0000_ptr, g_bios_image + 0x40000, 0x10000);
             }
         }
-        if (g_smram_tseg && g_bios_loaded) {
-            uint8_t *tseg_ptr = (uint8_t *)memory_region_get_ram_ptr(g_smram_tseg);
+        if (g_high_smram && g_bios_loaded) {
+            uint8_t *high_ptr = memory_region_get_ram_ptr(g_high_smram);
             uint8_t *mod3 = g_bios_image + 0x30000;
-            memcpy(tseg_ptr + 0xa0000, mod3, 0x10000);
-            memset(tseg_ptr + 0xb0000, 0, 0x10000);
+            memcpy(high_ptr, mod3, 0x10000);
+            memset(high_ptr + 0x10000, 0, 0x10000);
 
-            /* Preload GDT Table at 0xFEDBF000 (offset 0xBF000 in smram_tseg) */
-            uint8_t *gdt_dest = tseg_ptr + 0xbf000;
+            uint8_t *gdt_dest = high_ptr + 0x1f000;
             memcpy(gdt_dest, mod3 + 0x0046, 0x130);
-            tseg_ptr[0xb9ef0] = 0x04; /* IDE/DMA Controller Ready */
-            tseg_ptr[0x9ef0] = 0x04;
-            tseg_ptr[0xb39df] = 0x0c; /* AC Power Present + Main Battery Good */
-            tseg_ptr[0xb39e6] = 0x40; /* Lid Open / LCD Flat Panel Active */
-            tseg_ptr[0x39df] = 0x0c;
-            tseg_ptr[0x39e6] = 0x40;
-            tseg_ptr[0xb39ad] = 0x80; /* APM Mode Active */
-            tseg_ptr[0xb39ae] = 0x80; /* APM Mode Enabled / SMM Ready */
-            tseg_ptr[0xb39af] = 0x01; /* AC Power Present / Normal Power State */
-            tseg_ptr[0x39ad] = 0x80;
-            tseg_ptr[0x39ae] = 0x80;
-            tseg_ptr[0x39af] = 0x01;
-            tseg_ptr[0xba140] = 0x08; /* PM Unit Semaphore Available */
-            tseg_ptr[0xa140] = 0x08;
-            tseg_ptr[0xb9fbf] = 0x40; /* System Expansion / PCI Controller Ready */
-            tseg_ptr[0x9fbf] = 0x40;
+            high_ptr[0x19ef0] = 0x04;
+            high_ptr[0x139df] = 0x0c;
+            high_ptr[0x139e6] = 0x40;
+            high_ptr[0x139ad] = 0x80;
+            high_ptr[0x139ae] = 0x80;
+            high_ptr[0x139af] = 0x01;
+            high_ptr[0x1a140] = 0x08;
+            high_ptr[0x19fbf] = 0x40;
             gdt_dest[0x32] = 0x00; gdt_dest[0x34] = 0xda; gdt_dest[0x37] = 0xfe;
             gdt_dest[0x3a] = 0x00; gdt_dest[0x3c] = 0xda; gdt_dest[0x3f] = 0xfe;
 
-            /* Preload IDT Table at 0xFEDBF140 (offset 0xBF140 in smram_tseg) */
-            uint8_t *idt = tseg_ptr + 0xbf140;
+            uint8_t *idt = high_ptr + 0x1f140;
             idt[0] = 0x53; idt[1] = 0xff;
             memcpy(idt + 2, mod3 + 0x772f, 6);
             for (int k = 1; k < 128; k++) {
@@ -1025,6 +1137,9 @@ static void m200_init(MachineState *machine)
     object_property_set_uint(phb, PCI_HOST_ABOVE_4G_MEM_SIZE,
                              x86ms->above_4g_mem_size, &error_fatal);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(phb), &error_fatal);
+
+    I855PMHost *i855 = I855PM_HOST_DEVICE(phb);
+    g_high_smram = &i855->mch.high_smram_backing;
 
     pcms->pcibus = PCI_BUS(qdev_get_child_bus(DEVICE(phb), "pci.0"));
 
@@ -1145,8 +1260,11 @@ static void m200_init(MachineState *machine)
         pci_config_set_revision(smb->config, 0x03);
         pci_set_word(smb->config + PCI_SUBSYSTEM_VENDOR_ID, PCI_VENDOR_ID_TOSHIBA);
         pci_set_word(smb->config + PCI_SUBSYSTEM_ID, 0x0001);
+        ich4m_lpc_set_smbus_device(ICH4M_LPC_DEVICE(lpc), smb);
         pcms->smbus = I2C_BUS(qdev_get_child_bus(DEVICE(smb), "i2c"));
-        smbus_eeprom_init(pcms->smbus, 8, NULL, 0);
+        smbus_eeprom_init(pcms->smbus, 8, ddr_spd_dimm0,
+                          sizeof(ddr_spd_dimm0));
+        m200_smbus_create_board_devices(pcms->smbus);
     }
 
     /* AC'97 Audio (D31:F5) */
@@ -1172,7 +1290,6 @@ static void m200_init(MachineState *machine)
     }
 
     /* Video (NVIDIA GeForce FX Go5200 / NV34M on AGP Bridge 00:01.0 -> 01:00.0) & Network */
-    I855PMHost *i855 = I855PM_HOST_DEVICE(phb);
     PCIBus *agp_bus = pci_bridge_get_sec_bus(PCI_BRIDGE(&i855->agp));
     pci_create_simple(agp_bus, PCI_DEVFN(0, 0), TYPE_NV34M_VGA);
     pc_nic_init(pcmc, isa_bus, pcms->pcibus);
@@ -1182,12 +1299,6 @@ static void m200_init(MachineState *machine)
     memory_region_init_io(port80_io, OBJECT(machine), &toshiba_port80_ops, NULL,
                           "toshiba-port80", 1);
     memory_region_add_subregion_overlap(system_io, 0x80, port80_io, 100);
-
-    /* Map 1MB Toshiba NoteBIOS High SMRAM / TSEG Window (0xFED00000..0xFEDFFFFF) */
-    MemoryRegion *smram_tseg = g_new(MemoryRegion, 1);
-    memory_region_init_ram(smram_tseg, NULL, "m200.smram-tseg", 0x100000, &error_fatal);
-    memory_region_add_subregion_overlap(system_memory, 0xfed00000, smram_tseg, 1000);
-    g_smram_tseg = smram_tseg;
 
     /* Map Toshiba authentic shadow RAM when 512K ROM is loaded */
     if (machine->firmware && (strstr(machine->firmware, "512") || strstr(machine->firmware, "TOSHIBA"))) {
@@ -1216,37 +1327,28 @@ static void m200_init(MachineState *machine)
                 }
 
                 /* Preload Module 3 into High SMRAM at 0xFEDA0000 and clear BSS at 0xFEDB0000 */
-                uint8_t *tseg_ptr = (uint8_t *)memory_region_get_ram_ptr(smram_tseg);
+                uint8_t *high_ptr = memory_region_get_ram_ptr(g_high_smram);
                 fseek(f, 0x30000, SEEK_SET);
-                if (fread(tseg_ptr + 0xa0000, 1, 0x10000, f) == 0x10000) {}
-                memset(tseg_ptr + 0xb0000, 0, 0x10000);
+                if (fread(high_ptr, 1, 0x10000, f) == 0x10000) {}
+                memset(high_ptr + 0x10000, 0, 0x10000);
 
-                /* Preload authentic NoteBIOS GDT Table at 0xFEDBF000 (offset 0xBF000 in smram_tseg) */
-                uint8_t *gdt_dest = tseg_ptr + 0xbf000;
-                uint8_t *mod3 = tseg_ptr + 0xa0000;
+                uint8_t *gdt_dest = high_ptr + 0x1f000;
+                uint8_t *mod3 = high_ptr;
                 memcpy(gdt_dest, mod3 + 0x0046, 0x130);
-                tseg_ptr[0xb9ef0] = 0x04; /* IDE/DMA Controller Ready */
-                tseg_ptr[0x9ef0] = 0x04;
-                tseg_ptr[0xb39df] = 0x0c; /* AC Power Present + Main Battery Good */
-                tseg_ptr[0xb39e6] = 0x40; /* Lid Open / LCD Flat Panel Active */
-                tseg_ptr[0x39df] = 0x0c;
-                tseg_ptr[0x39e6] = 0x40;
-                tseg_ptr[0xb39ad] = 0x80; /* APM Mode Active */
-                tseg_ptr[0xb39ae] = 0x80; /* APM Mode Enabled / SMM Ready */
-                tseg_ptr[0xb39af] = 0x01; /* AC Power Present / Normal Power State */
-                tseg_ptr[0x39ad] = 0x80;
-                tseg_ptr[0x39ae] = 0x80;
-                tseg_ptr[0x39af] = 0x01;
-                tseg_ptr[0xba140] = 0x08; /* PM Unit Semaphore Available */
-                tseg_ptr[0xa140] = 0x08;
-                tseg_ptr[0xb9fbf] = 0x40; /* System Expansion / PCI Controller Ready */
-                tseg_ptr[0x9fbf] = 0x40;
+                high_ptr[0x19ef0] = 0x04;
+                high_ptr[0x139df] = 0x0c;
+                high_ptr[0x139e6] = 0x40;
+                high_ptr[0x139ad] = 0x80;
+                high_ptr[0x139ae] = 0x80;
+                high_ptr[0x139af] = 0x01;
+                high_ptr[0x1a140] = 0x08;
+                high_ptr[0x19fbf] = 0x40;
                 /* Pre-configure Selector 0x30 and 0x38 to point to 0xFEDA0000 */
                 gdt_dest[0x32] = 0x00; gdt_dest[0x34] = 0xda; gdt_dest[0x37] = 0xfe;
                 gdt_dest[0x3a] = 0x00; gdt_dest[0x3c] = 0xda; gdt_dest[0x3f] = 0xfe;
 
-                /* Preload authentic NoteBIOS IDT Table at 0xFEDBF140 (offset 0xBF140 in smram_tseg) */
-                uint8_t *idt = tseg_ptr + 0xbf140;
+                /* Preload authentic NoteBIOS IDT at FEDBF140. */
+                uint8_t *idt = high_ptr + 0x1f140;
                 idt[0] = 0x53; idt[1] = 0xff;
                 memcpy(idt + 2, mod3 + 0x772f, 6);
                 for (int k = 1; k < 128; k++) {
@@ -1294,6 +1396,7 @@ static void m200_init(MachineState *machine)
                 ptr[0xfff2] = 0x29;
                 ptr[0xfff3] = 0x00;
                 ptr[0xfff4] = 0xf0; /* ljmp $0xF000, $0x291C (Authentic Module 2 Cold POST Entry) */
+
                 fclose(f);
             }
             g_free(filename);
@@ -1315,18 +1418,6 @@ static void m200_init(MachineState *machine)
     memory_region_init_io(sio_1e0_mr, OBJECT(machine), &toshiba_dport_ops, dport,
                           "toshiba-dport", 8);
     memory_region_add_subregion_overlap(system_io, 0x1e0, sio_1e0_mr, 100);
-
-    /* Map Intel ICH4-M APM / Toshiba SMI Control Port (0xB2/0xB3) */
-    MemoryRegion *apmc_io = g_new(MemoryRegion, 1);
-    memory_region_init_io(apmc_io, OBJECT(machine), &toshiba_apmc_ops, NULL,
-                          "toshiba-apmc-smi", 2);
-    memory_region_add_subregion_overlap(system_io, 0xb2, apmc_io, 100);
-
-    /* Map Toshiba LCD Display Controller Port (0xD800..0xD8FF) */
-    MemoryRegion *lcd_d800_mr = g_new(MemoryRegion, 1);
-    memory_region_init_io(lcd_d800_mr, OBJECT(machine), &toshiba_lcd_d800_ops, NULL,
-                          "toshiba-lcd-d800", 0x100);
-    memory_region_add_subregion_overlap(system_io, 0xd800, lcd_d800_mr, 100);
 
     /* Initialize BDA (0x00000400..0x000004FF) and System Parameters */
     uint8_t *ram_base = (uint8_t *)memory_region_get_ram_ptr(machine->ram);
@@ -1471,11 +1562,6 @@ static void m200_init(MachineState *machine)
     memory_region_add_subregion(system_io, 0x66, acpi_ec_cmd);
 
 
-    /* Intel ICH4-M ACPI Power Management Timer (Base 0xD800, Timer at 0xD808) */
-    MemoryRegion *acpi_pm = g_new(MemoryRegion, 1);
-    memory_region_init_io(acpi_pm, OBJECT(machine), &toshiba_acpi_pm_ops, NULL, "m200-acpi-pm", 0x40);
-    memory_region_add_subregion_overlap(system_io, 0xd800, acpi_pm, 100);
-
     /* Port 0x64 KBC Status (SYSF set) */
     MemoryRegion *kbc_status_io = g_new(MemoryRegion, 1);
     memory_region_init_io(kbc_status_io, OBJECT(machine), &toshiba_kbc_status_ops, NULL, "m200-kbc-status", 1);
@@ -1483,6 +1569,12 @@ static void m200_init(MachineState *machine)
 
     /* Intel ICH4-M SMBus Controller (Base 0xD880) */
     ToshibaSMBusState *smbus = g_new0(ToshibaSMBusState, 1);
+    smbus->lpc = ICH4M_LPC_DEVICE(lpc);
+    smbus->bus = pcms->smbus;
+    smbus->trace = getenv("M200_SMBUS_TRACE") != NULL;
+    smbus->transaction_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
+                                             m200_smbus_transaction_complete,
+                                             smbus);
     MemoryRegion *smbus_io = g_new(MemoryRegion, 1);
     memory_region_init_io(smbus_io, OBJECT(machine), &toshiba_smbus_ops, smbus, "m200-smbus", 0x20);
     memory_region_add_subregion_overlap(system_io, 0xd880, smbus_io, 100);
@@ -1536,5 +1628,3 @@ static void m200_machine_register_types(void)
 }
 
 type_init(m200_machine_register_types);
-
-

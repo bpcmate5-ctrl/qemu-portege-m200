@@ -13,6 +13,7 @@
 #define HW_ACPI_ICH4M_H
 
 #include "hw/acpi/acpi.h"
+#include "qemu/timer.h"
 
 #define ACPI_PCIHP_ADDR_ICH4M 0xae00
 
@@ -24,6 +25,11 @@ typedef struct ICH4MLPCPMRegs {
 
     MemoryRegion io;
     MemoryRegion io_gpe;
+    MemoryRegion io_smi;
+
+    uint32_t smi_en;
+    uint32_t smi_sts;
+    QEMUTimer *periodic_timer;
 
     qemu_irq irq;      /* SCI */
 
@@ -38,7 +44,8 @@ typedef struct ICH4MLPCPMRegs {
 void ich4m_pm_init(PCIDevice *lpc_pci, ICH4MLPCPMRegs *pm, qemu_irq sci_irq);
 void ich4m_pm_add_properties(Object *obj, ICH4MLPCPMRegs *pm);
 void ich4m_pm_iospace_update(ICH4MLPCPMRegs *pm, uint32_t pm_io_base);
+void ich4m_pm_update_periodic_timer(ICH4MLPCPMRegs *pm);
+void ich4m_pm_reset(ICH4MLPCPMRegs *pm);
 extern const VMStateDescription vmstate_ich4m_pm;
 
 #endif /* HW_ACPI_ICH4M_H */
-

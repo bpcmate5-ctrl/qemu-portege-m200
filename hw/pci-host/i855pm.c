@@ -235,6 +235,25 @@ static const TypeInfo i855pm_agp_info = {
  * i855PM MCH D0:F0
  */
 
+static uint64_t i855pm_blackhole_read(void *opaque, hwaddr addr,
+                                      unsigned size)
+{
+    return UINT64_MAX;
+}
+
+static void i855pm_blackhole_write(void *opaque, hwaddr addr, uint64_t value,
+                                   unsigned size)
+{
+}
+
+static const MemoryRegionOps i855pm_blackhole_ops = {
+    .read = i855pm_blackhole_read,
+    .write = i855pm_blackhole_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid.min_access_size = 1,
+    .valid.max_access_size = 4,
+};
+
 /* PAM */
 static void i855pm_mch_update_pam(I855PMMCHState *mch)
 {
@@ -253,51 +272,77 @@ static void i855pm_mch_update_pam(I855PMMCHState *mch)
 static void i855pm_mch_update_smram(I855PMMCHState *mch)
 {
     PCIDevice *pd = PCI_DEVICE(mch);
+    uint8_t smram = pd->config[I855PM_HOST_BRIDGE_SMRAM];
+    uint8_t esmramc = pd->config[I855PM_HOST_BRIDGE_ESMRAMC];
+    bool h_smrame = esmramc & I855PM_HOST_BRIDGE_ESMRAMC_H_SMRAME;
+    bool g_smrame = smram & I855PM_HOST_BRIDGE_SMRAM_G_SMRAME;
+    uint32_t tseg_size = 0;
 
-    if (pd->config[I855PM_HOST_BRIDGE_SMRAM] & I855PM_HOST_BRIDGE_SMRAM_D_LCK) {
+    if (smram & I855PM_HOST_BRIDGE_SMRAM_D_LCK) {
         pd->config[I855PM_HOST_BRIDGE_SMRAM] &= ~I855PM_HOST_BRIDGE_SMRAM_D_OPEN;
-        pd->wmask[I855PM_HOST_BRIDGE_SMRAM] = 0;
+        pd->wmask[I855PM_HOST_BRIDGE_SMRAM] =
+            I855PM_HOST_BRIDGE_SMRAM_WMASK_LCK;
+        pd->wmask[I855PM_HOST_BRIDGE_ESMRAMC] = 0;
+        smram = pd->config[I855PM_HOST_BRIDGE_SMRAM];
     }
 
     memory_region_transaction_begin();
 
-    if (pd->config[I855PM_HOST_BRIDGE_SMRAM] & I855PM_HOST_BRIDGE_SMRAM_D_OPEN) {
-        memory_region_set_enabled(&mch->smram_region, true);
+    if (smram & I855PM_HOST_BRIDGE_SMRAM_D_OPEN) {
+        memory_region_set_enabled(&mch->smram_region, h_smrame);
+        memory_region_set_enabled(&mch->open_high_smram, h_smrame);
     } else {
-        memory_region_set_enabled(&mch->smram_region, false);
+        memory_region_set_enabled(&mch->smram_region, true);
+        memory_region_set_enabled(&mch->open_high_smram, false);
     }
+
+    memory_region_set_enabled(&mch->low_smram, g_smrame && !h_smrame);
+    memory_region_set_enabled(&mch->high_smram, g_smrame && h_smrame);
+
+    if (g_smrame &&
+        (esmramc & I855PM_HOST_BRIDGE_ESMRAMC_T_EN)) {
+        switch (esmramc & I855PM_HOST_BRIDGE_ESMRAMC_TSEG_SZ_MASK) {
+        case I855PM_HOST_BRIDGE_ESMRAMC_TSEG_SZ_1MB:
+            tseg_size = 1 * MiB;
+            break;
+        case I855PM_HOST_BRIDGE_ESMRAMC_TSEG_SZ_2MB:
+            tseg_size = 2 * MiB;
+            break;
+        case I855PM_HOST_BRIDGE_ESMRAMC_TSEG_SZ_8MB:
+            tseg_size = 8 * MiB;
+            break;
+        default:
+            /* Reserved encoding: leave TSEG disabled. */
+            break;
+        }
+    }
+
+    memory_region_del_subregion(mch->system_memory, &mch->tseg_blackhole);
+    memory_region_set_enabled(&mch->tseg_blackhole, tseg_size != 0);
+    memory_region_set_size(&mch->tseg_blackhole, tseg_size ?: 1);
+    memory_region_add_subregion_overlap(mch->system_memory,
+                                        mch->below_4g_mem_size - tseg_size,
+                                        &mch->tseg_blackhole, 2);
+
+    memory_region_set_enabled(&mch->tseg_window, tseg_size != 0);
+    memory_region_set_size(&mch->tseg_window, tseg_size ?: 1);
+    memory_region_set_address(&mch->tseg_window,
+                              mch->below_4g_mem_size - tseg_size);
+    memory_region_set_alias_offset(&mch->tseg_window,
+                                   mch->below_4g_mem_size - tseg_size);
 
     memory_region_transaction_commit();
-}
 
-static uint64_t i855pm_mchbar_read(void *opaque, hwaddr addr, unsigned size)
-{
-    I855PMMCHState *mch = opaque;
-    if (addr + size <= sizeof(mch->mchbar_regs)) {
-        uint64_t val = 0;
-        memcpy(&val, mch->mchbar_regs + addr, size);
-        return val;
-    }
-    return 0;
-}
-
-static void i855pm_mchbar_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
-{
-    I855PMMCHState *mch = opaque;
-    if (addr + size <= sizeof(mch->mchbar_regs)) {
-        memcpy(mch->mchbar_regs + addr, &val, size);
+    if (getenv("M200_SMRAM_TRACE")) {
+        fprintf(stderr,
+                "[I855PM SMRAM] SMRAM=%02x ESMRAMC=%02x normal-high=%d "
+                "smm-low=%d smm-high=%d tseg=%u base=%08" PRIx64 "\n",
+                smram, esmramc,
+                !!(smram & I855PM_HOST_BRIDGE_SMRAM_D_OPEN) && h_smrame,
+                g_smrame && !h_smrame, g_smrame && h_smrame, tseg_size,
+                tseg_size ? mch->below_4g_mem_size - tseg_size : 0);
     }
 }
-
-static const MemoryRegionOps i855pm_mchbar_ops = {
-    .read = i855pm_mchbar_read,
-    .write = i855pm_mchbar_write,
-    .endianness = DEVICE_LITTLE_ENDIAN,
-    .impl = {
-        .min_access_size = 1,
-        .max_access_size = 4,
-    },
-};
 
 static void i855pm_mch_write_config(PCIDevice *d,
                                     uint32_t address, uint32_t val, int len)
@@ -313,8 +358,7 @@ static void i855pm_mch_write_config(PCIDevice *d,
         i855pm_mch_update_pam(mch);
     }
 
-    if (ranges_overlap(address, len, I855PM_HOST_BRIDGE_SMRAM,
-                       I855PM_HOST_BRIDGE_SMRAM_SIZE)) {
+    if (ranges_overlap(address, len, I855PM_HOST_BRIDGE_SMRAM, 2)) {
         i855pm_mch_update_smram(mch);
     }
 }
@@ -368,15 +412,29 @@ static void i855pm_mch_reset(DeviceState *qdev)
     d->config[I855PM_HOST_BRIDGE_DRA + 1] = 0x04;
     memset(d->wmask + I855PM_HOST_BRIDGE_DRA, 0xff, I855PM_HOST_BRIDGE_DRA_SIZE);
 
+    /* TOM is derived from installed low memory; 2 GiB therefore reads 8000h. */
+    pci_set_word(d->config + I855PM_HOST_BRIDGE_TOM,
+                 MIN(mch->below_4g_mem_size >> 16, UINT16_MAX));
+    pci_set_word(d->wmask + I855PM_HOST_BRIDGE_TOM, 0x0000);
+
     /* Initialize PAM registers and write masks (Default 0x00: Reads from ROM) */
     memset(d->config + I855PM_HOST_BRIDGE_PAM0, 0x00, I855PM_HOST_BRIDGE_PAM_SIZE);
     memset(d->wmask + I855PM_HOST_BRIDGE_PAM0, 0xff, I855PM_HOST_BRIDGE_PAM_SIZE);
 
     /* Initialize SMRAM and ESMRAMC */
     d->config[I855PM_HOST_BRIDGE_SMRAM] = I855PM_HOST_BRIDGE_SMRAM_DEFAULT;
-    d->wmask[I855PM_HOST_BRIDGE_SMRAM] = 0xff;
-    d->config[I855PM_HOST_BRIDGE_ESMRAMC] = I855PM_HOST_BRIDGE_ESMRAMC_DEFAULT;
-    d->wmask[I855PM_HOST_BRIDGE_ESMRAMC] = 0xff;
+    d->wmask[I855PM_HOST_BRIDGE_SMRAM] = I855PM_HOST_BRIDGE_SMRAM_WMASK;
+    d->config[I855PM_HOST_BRIDGE_ESMRAMC] =
+        I855PM_HOST_BRIDGE_ESMRAMC_DEFAULT;
+    d->wmask[I855PM_HOST_BRIDGE_ESMRAMC] =
+        I855PM_HOST_BRIDGE_ESMRAMC_WMASK;
+
+    d->config[I855PM_HOST_BRIDGE_APSIZE] = 0x00;
+    d->wmask[I855PM_HOST_BRIDGE_APSIZE] = 0x00;
+    pci_set_long(d->config + I855PM_HOST_BRIDGE_ATTBASE, 0);
+    pci_set_long(d->wmask + I855PM_HOST_BRIDGE_ATTBASE, 0xfffff000);
+    pci_set_long(d->config + I855PM_HOST_BRIDGE_AGPCTRL, 0);
+    pci_set_long(d->wmask + I855PM_HOST_BRIDGE_AGPCTRL, 0xffffffff);
 
     i855pm_mch_update(mch);
 }
@@ -403,7 +461,7 @@ static void i855pm_mch_realize(PCIDevice *d, Error **errp)
                  PAM_EXPAN_BASE + i * PAM_EXPAN_SIZE, PAM_EXPAN_SIZE);
     }
 
-    /* SMRAM region */
+    /* Compatibility SMRAM, visible to non-SMM software only while open. */
     memory_region_init_alias(&mch->smram_region, OBJECT(mch), "smram-region",
                              mch->pci_address_space,
                              I855PM_HOST_BRIDGE_SMRAM_C_BASE,
@@ -413,11 +471,81 @@ static void i855pm_mch_realize(PCIDevice *d, Error **errp)
                                         &mch->smram_region, 1);
     memory_region_set_enabled(&mch->smram_region, false);
 
-    /* Intel 855PM Memory Controller Hub MMIO BAR at 0x80000000 (64KB) */
-    memory_region_init_io(&mch->mchbar_region, OBJECT(mch), &i855pm_mchbar_ops, mch,
-                          "i855pm-mchbar", 0x10000);
-    memory_region_add_subregion_overlap(mch->system_memory, 0x80000000,
-                                        &mch->mchbar_region, 1);
+    /* Fixed high SMRAM is a dedicated 128 KiB store, not TSEG. */
+    memory_region_init_ram(&mch->high_smram_backing, OBJECT(mch),
+                           "i855pm.fixed-high-smram", I855PM_HIGH_SMRAM_SIZE,
+                           errp);
+    if (*errp) {
+        return;
+    }
+    memory_region_init_alias(&mch->open_high_smram, OBJECT(mch),
+                             "i855pm.fixed-high-smram-open",
+                             &mch->high_smram_backing, 0,
+                             I855PM_HIGH_SMRAM_SIZE);
+    memory_region_add_subregion_overlap(mch->system_memory,
+                                        I855PM_HIGH_SMRAM_BASE,
+                                        &mch->open_high_smram, 1000);
+    memory_region_set_enabled(&mch->open_high_smram, false);
+
+    /* Higher-priority overlays selected only for CPU accesses in SMM. */
+    memory_region_init(&mch->smram, OBJECT(mch), "i855pm.smram", 4 * GiB);
+    memory_region_init_alias(&mch->low_smram, OBJECT(mch),
+                             "i855pm.compat-smram-smm", mch->ram_memory,
+                             I855PM_HOST_BRIDGE_SMRAM_C_BASE,
+                             I855PM_HOST_BRIDGE_SMRAM_C_SIZE);
+    memory_region_add_subregion(&mch->smram,
+                                I855PM_HOST_BRIDGE_SMRAM_C_BASE,
+                                &mch->low_smram);
+    memory_region_init_alias(&mch->high_smram, OBJECT(mch),
+                             "i855pm.fixed-high-smram-smm",
+                             &mch->high_smram_backing, 0,
+                             I855PM_HIGH_SMRAM_SIZE);
+    memory_region_add_subregion(&mch->smram, I855PM_HIGH_SMRAM_BASE,
+                                &mch->high_smram);
+
+    /* Toshiba's relocation stub makes FEDB0000 visible at default SMBASE. */
+    memory_region_init_alias(&mch->default_smbase, OBJECT(mch),
+                             "m200.smm-default-smbase",
+                             &mch->high_smram_backing, 0x10000, 0x10000);
+    memory_region_add_subregion_overlap(&mch->smram, 0x30000,
+                                        &mch->default_smbase, 2);
+
+    /* Top-of-DRAM TSEG is separate and aliases reserved system DRAM. */
+    memory_region_init_io(&mch->tseg_blackhole, OBJECT(mch),
+                          &i855pm_blackhole_ops, NULL,
+                          "i855pm.tseg-blackhole", 1);
+    memory_region_set_enabled(&mch->tseg_blackhole, false);
+    memory_region_add_subregion_overlap(mch->system_memory,
+                                        mch->below_4g_mem_size,
+                                        &mch->tseg_blackhole, 2);
+    memory_region_init_alias(&mch->tseg_window, OBJECT(mch),
+                             "i855pm.tseg-smm", mch->ram_memory,
+                             mch->below_4g_mem_size, 1);
+    memory_region_set_enabled(&mch->tseg_window, false);
+    memory_region_add_subregion(&mch->smram, mch->below_4g_mem_size,
+                                &mch->tseg_window);
+
+    object_property_add_const_link(qdev_get_machine(), "smram",
+                                   OBJECT(&mch->smram));
+
+    /* APBASE is a 256 MiB prefetchable aperture; GART remains inactive. */
+    memory_region_init(&mch->agp_aperture, OBJECT(mch),
+                       "i855pm.agp-aperture", 256 * MiB);
+    pci_register_bar(d, 0, PCI_BASE_ADDRESS_MEM_PREFETCH,
+                     &mch->agp_aperture);
+
+    if (pci_add_capability(d, PCI_CAP_ID_AGP, I855PM_AGP_CAP_OFFSET,
+                           12, errp) < 0) {
+        return;
+    }
+    pci_set_word(d->config + I855PM_AGP_CAP_OFFSET + 2,
+                 I855PM_AGP_CAP_VERSION_2);
+    pci_set_long(d->config + I855PM_AGP_CAP_OFFSET + 4,
+                 I855PM_AGP_STATUS);
+    pci_set_long(d->wmask + I855PM_AGP_CAP_OFFSET + 8,
+                 I855PM_AGP_COMMAND_WMASK);
+
+    /* The prior synthetic 0x80000000 MCHBAR was not an 855PM register BAR. */
 }
 
 static void i855pm_mch_class_init(ObjectClass *klass, const void *data)
@@ -457,5 +585,3 @@ static void i855pm_register(void)
 }
 
 type_init(i855pm_register);
-
-

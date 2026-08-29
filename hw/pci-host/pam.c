@@ -53,8 +53,14 @@ void init_pam(PAMMemoryRegion *mem, Object *owner, MemoryRegion *ram_memory,
     memory_region_transaction_begin();
     for (i = 0; i < 4; ++i) {
         memory_region_set_enabled(&mem->alias[i], false);
+        /*
+         * PAM is the host bridge's CPU-visible decode for the legacy BIOS
+         * windows.  It must win over the firmware ROM's low alias (priority
+         * 1), otherwise PAM3 reads continue to see ROM after the guest has
+         * copied it into RAM.
+         */
         memory_region_add_subregion_overlap(system_memory, start,
-                                            &mem->alias[i], 1);
+                                            &mem->alias[i], 2);
     }
     memory_region_transaction_commit();
     mem->current = 0;
@@ -62,9 +68,20 @@ void init_pam(PAMMemoryRegion *mem, Object *owner, MemoryRegion *ram_memory,
 
 void pam_update(PAMMemoryRegion *pam, int idx, uint8_t val)
 {
+    static const char *const read_source[] = { "PCI/ROM", "RAM", "PCI/ROM", "RAM" };
+    static const char *const write_target[] = { "discard/PCI", "discard/PCI", "RAM", "RAM" };
+    unsigned old;
+
     assert(0 <= idx && idx < PAM_REGIONS_COUNT);
 
+    old = pam->current;
     memory_region_set_enabled(&pam->alias[pam->current], false);
     pam->current = (val >> ((!(idx & 1)) * 4)) & PAM_ATTR_MASK;
     memory_region_set_enabled(&pam->alias[pam->current], true);
+    if (getenv("M200_PAM_TRACE") && old != pam->current) {
+        fprintf(stderr,
+                "[M200 PAM] region=%d attr=%u->%u read=%s write=%s\n",
+                idx, old, pam->current, read_source[pam->current],
+                write_target[pam->current]);
+    }
 }
