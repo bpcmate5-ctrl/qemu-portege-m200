@@ -38,6 +38,7 @@
 #include "hw/i2c/m200_smbus.h"
 #include "hw/southbridge/ich9.h"
 #include "hw/display/nv34m.h"
+#include "hw/i386/m200_ec.h"
 #include "hw/char/serial-isa.h"
 #include "chardev/char.h"
 #include "system/hw_accel.h"
@@ -122,42 +123,6 @@ static const MemoryRegionOps toshiba_ec_ops = {
     .write = toshiba_ec_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
-
-/* ACPI Embedded Controller (Ports 0x62 Data / 0x66 Status & Command) */
-typedef struct ToshibaAcpiECState {
-    uint8_t status;
-    uint8_t cmd;
-    uint8_t data_index;
-} ToshibaAcpiECState;
-
-static uint64_t toshiba_acpi_ec_data_read(void *opaque, hwaddr addr, unsigned size)
-{
-    ToshibaAcpiECState *ec = opaque;
-
-    ec->status &= ~0x01; /* Clear OBF */
-    return 0x00; /* EC Status / Power Query Success (0x00) */
-}
-
-static void toshiba_acpi_ec_data_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
-{
-    ToshibaAcpiECState *ec = opaque;
-
-    ec->status |= 0x01; /* Set OBF (Output Buffer Full) */
-}
-
-static uint64_t toshiba_acpi_ec_cmd_read(void *opaque, hwaddr addr, unsigned size)
-{
-    ToshibaAcpiECState *ec = opaque;
-    return (ec->status & 0x01) | 0x70;
-}
-
-static void toshiba_acpi_ec_cmd_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
-{
-    ToshibaAcpiECState *ec = opaque;
-    ec->cmd = val & 0xff;
-
-    ec->status |= 0x01; /* Set OBF (Output Buffer Full) */
-}
 
 /* Toshiba Portege M200 Hardware Debug Port (PJ2000 - MS Debug Port Spec v1.0 on 0x1E0..0x1E7) */
 typedef struct ToshibaDPortState {
@@ -292,18 +257,6 @@ static void toshiba_dport_write(void *opaque, hwaddr addr, uint64_t val, unsigne
 static const MemoryRegionOps toshiba_dport_ops = {
     .read = toshiba_dport_read,
     .write = toshiba_dport_write,
-    .endianness = DEVICE_LITTLE_ENDIAN,
-};
-
-static const MemoryRegionOps toshiba_acpi_ec_data_ops = {
-    .read = toshiba_acpi_ec_data_read,
-    .write = toshiba_acpi_ec_data_write,
-    .endianness = DEVICE_LITTLE_ENDIAN,
-};
-
-static const MemoryRegionOps toshiba_acpi_ec_cmd_ops = {
-    .read = toshiba_acpi_ec_cmd_read,
-    .write = toshiba_acpi_ec_cmd_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
@@ -1552,14 +1505,14 @@ static void m200_init(MachineState *machine)
     memory_region_init_io(ec_io, OBJECT(machine), &toshiba_ec_ops, ec, "toshiba-ec", 2);
     memory_region_add_subregion(system_io, 0xee, ec_io);
 
-    /* ACPI Embedded Controller (Ports 0x62 Data / 0x66 Status & Command) */
-    ToshibaAcpiECState *acpi_ec = g_new0(ToshibaAcpiECState, 1);
-    MemoryRegion *acpi_ec_data = g_new(MemoryRegion, 1);
-    MemoryRegion *acpi_ec_cmd = g_new(MemoryRegion, 1);
-    memory_region_init_io(acpi_ec_data, OBJECT(machine), &toshiba_acpi_ec_data_ops, acpi_ec, "acpi-ec-data", 1);
-    memory_region_init_io(acpi_ec_cmd, OBJECT(machine), &toshiba_acpi_ec_cmd_ops, acpi_ec, "acpi-ec-cmd", 1);
-    memory_region_add_subregion(system_io, 0x62, acpi_ec_data);
-    memory_region_add_subregion(system_io, 0x66, acpi_ec_cmd);
+    /*
+     * M306K5 LPC host mailbox (data 62h, command/status 66h).
+     *
+     * DBBSTS user flags are software-defined and reset to zero in the
+     * silicon.  Toshiba BIOS requires bits 6:4 set during its F002 response
+     * receive path, so model 70h as M200 EC-firmware/board initial state.
+     */
+    m200_ec_mailbox_new(OBJECT(machine), system_io, 0x70);
 
 
     /* Port 0x64 KBC Status (SYSF set) */
