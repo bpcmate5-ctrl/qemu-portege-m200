@@ -3576,12 +3576,18 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         case 0xe413: case 0xe414:
         case 0xe458: case 0xe45d: case 0xe463: case 0xe466:
         case 0x19a0: case 0x19af: case 0x19b5: case 0x19c6:
+        case 0x6826: case 0x6829: case 0x682b: case 0x6830:
+        case 0x6834: case 0x6853: case 0x685f: case 0x6862:
             if (m200_f108_timing) {
                 translator_io_start(&dc->base);
             }
             gen_helper_m200_step0_probe(tcg_env, tcg_constant_i32(ip16));
             break;
         default:
+            if (PE(dc) && ((ip16 >= 0x3420 && ip16 <= 0x3470) || ip16 == 0x0041 ||
+                           (ip16 >= 0x62e0 && ip16 <= 0x6300) || (ip16 >= 0xe470 && ip16 <= 0xe4a0))) {
+                gen_helper_m200_step0_probe(tcg_env, tcg_constant_i32(ip16));
+            }
             break;
         }
     }
@@ -3603,6 +3609,8 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         case 0xe3b3: case 0xe40e: case 0xe41f: case 0xe44d:
         case 0xe459: case 0xe464: case 0xe46d: case 0xe479:
         case 0xc147:
+        case 0x2880: case 0x2890: case 0x2895: case 0x28a9: case 0x28dd:
+        case 0x28e6: case 0x28e7: case 0x29bb: case 0x29f5:
         case 0x6e62: case 0x6e75: case 0x6e84: case 0x6e88:
             if (m200_f108_timing) {
                 translator_io_start(&dc->base);
@@ -3610,6 +3618,9 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
             gen_helper_m200_step0_probe(tcg_env, tcg_constant_i32(ip16));
             break;
         default:
+            if (ip16 >= 0x2780 && ip16 <= 0x2a50) {
+                gen_helper_m200_step0_probe(tcg_env, tcg_constant_i32(ip16));
+            }
             break;
         }
     }

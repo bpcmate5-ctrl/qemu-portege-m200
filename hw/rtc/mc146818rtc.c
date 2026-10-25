@@ -437,6 +437,9 @@ static void cmos_ioport_write(void *opaque, hwaddr addr,
         if (s->cmos_index == 0x0f) {
             fprintf(stderr, "[CMOS] Write 0x0F (shutdown status) = 0x%02x\n", (uint8_t)data);
         }
+        if (s->cmos_index == 0x4d || getenv("M200_CMOS_TRACE")) {
+            fprintf(stderr, "[CMOS W] index=0x%02x val=0x%02x\n", s->cmos_index, (uint8_t)data);
+        }
         switch(s->cmos_index) {
         case RTC_SECONDS_ALARM:
         case RTC_MINUTES_ALARM:
@@ -727,6 +730,9 @@ static uint64_t cmos_ioport_read(void *opaque, hwaddr addr,
         trace_mc146818_rtc_ioport_read(s->cmos_index, ret);
         if (idx == 0x0f) {
             fprintf(stderr, "[CMOS] Read 0x0F (shutdown status) = 0x%02x\n", ret);
+        }
+        if (idx == 0x4d || getenv("M200_CMOS_TRACE")) {
+            fprintf(stderr, "[CMOS R] index=0x%02x val=0x%02x\n", idx, ret);
         }
         return ret;
     }

@@ -121,6 +121,71 @@ static const MemoryRegionOps toshiba_ec_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
+/* Toshiba Portege M200 M306K5 Host Mailbox Backend (Ports 0x62/0x66) */
+typedef struct ToshibaM200ECBackend {
+    M200ECMailbox *mailbox;
+    uint8_t current_cmd;
+    uint8_t reg_index;
+    int state;
+    uint8_t ec_regs[256];
+} ToshibaM200ECBackend;
+
+static void m200_ec_backend_input(void *opaque, M200ECMailbox *mailbox)
+{
+    ToshibaM200ECBackend *s = opaque;
+    bool is_cmd;
+    uint8_t val = m200_ec_mailbox_consume_input(mailbox, &is_cmd);
+
+    if (is_cmd) {
+        s->current_cmd = val;
+        s->state = 1;
+        if (val == 0x93) {
+            uint8_t ret = 0x00;
+            m200_ec_mailbox_output_byte(mailbox, ret);
+            m200_ec_mailbox_set_user_status(mailbox, 0x70);
+            uint8_t flag = 0;
+            cpu_physical_memory_read(0xfedb9fc4, &flag, 1);
+            flag |= 0x02;
+            cpu_physical_memory_write(0xfedb9fc4, &flag, 1);
+            s->current_cmd = 0;
+            s->state = 0;
+        }
+    } else {
+        if (s->current_cmd == 0x90) {
+            uint8_t idx = val;
+            uint8_t ret = s->ec_regs[idx];
+            m200_ec_mailbox_output_byte(mailbox, ret);
+            m200_ec_mailbox_set_user_status(mailbox, 0x70);
+            uint8_t flag = 0;
+            cpu_physical_memory_read(0xfedb9fc4, &flag, 1);
+            flag |= 0x02;
+            cpu_physical_memory_write(0xfedb9fc4, &flag, 1);
+            fprintf(stderr, "[M200 EC BACKEND] CMD 90 read reg 0x%02x -> 0x%02x\n", idx, ret);
+            s->current_cmd = 0;
+            s->state = 0;
+        } else if (s->current_cmd == 0x91) {
+            if (s->state == 1) {
+                s->reg_index = val;
+                s->state = 2;
+            } else if (s->state == 2) {
+                s->ec_regs[s->reg_index] = val;
+                m200_ec_mailbox_set_user_status(mailbox, 0x70);
+                fprintf(stderr, "[M200 EC BACKEND] CMD 91 write reg 0x%02x <- 0x%02x\n", s->reg_index, val);
+                s->current_cmd = 0;
+                s->state = 0;
+            }
+        } else {
+            fprintf(stderr, "[M200 EC BACKEND] data byte 0x%02x with cmd 0x%02x\n", val, s->current_cmd);
+            s->current_cmd = 0;
+            s->state = 0;
+        }
+    }
+}
+
+static const M200ECBackendOps m200_ec_backend_ops = {
+    .input_available = m200_ec_backend_input,
+};
+
 /* Toshiba Portege M200 Hardware Debug Port (PJ2000 - MS Debug Port Spec v1.0 on 0x1E0..0x1E7) */
 typedef struct ToshibaDPortState {
     uint8_t byte_count;
@@ -1537,7 +1602,13 @@ static void m200_init(MachineState *machine)
      * silicon.  Toshiba BIOS requires bits 6:4 set during its F002 response
      * receive path, so model 70h as M200 EC-firmware/board initial state.
      */
-    m200_ec_mailbox_new(OBJECT(machine), system_io, 0x70);
+    M200ECMailbox *ec_mb = m200_ec_mailbox_new(OBJECT(machine), system_io, 0x70);
+    ToshibaM200ECBackend *ec_backend = g_new0(ToshibaM200ECBackend, 1);
+    ec_backend->mailbox = ec_mb;
+    ec_backend->ec_regs[0x03] = 0x01; /* Internal SXGA+ LCD active */
+    ec_backend->ec_regs[0x05] = 0x80; /* AC power connected, battery charged */
+    ec_backend->ec_regs[0x0d] = 0x00; /* Normal laptop lid open */
+    m200_ec_mailbox_set_backend(ec_mb, &m200_ec_backend_ops, ec_backend);
 
 
     /* Port 0x64 KBC Status (SYSF set) */

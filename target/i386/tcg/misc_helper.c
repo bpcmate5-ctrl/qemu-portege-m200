@@ -1096,7 +1096,108 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
         m200_dump_core(env, tag, "BEFORE mov di,691c / jmp 40:1067");
         break;
 
+    case 0x6826:
+        m200_dump_core(env, tag, "Step8 entry at 0048:6826 BEFORE call e29b (CMOS 4D)");
+        break;
+
+    case 0x6829:
+        {
+            uint16_t a2e3 = 0;
+            cpu_physical_memory_read(0xfedba2e3, &a2e3, 2);
+            m200_dump_core(env, tag, "Step8 AFTER call e29b, BEFORE je 6853");
+            fprintf(stderr, "   [STEP8 DIAG] AX=%04x EFL=%08x (ZF=%d) A2E3=%04x\n",
+                    (uint16_t)env->regs[R_EAX], cpu_compute_eflags(env),
+                    !!(cpu_compute_eflags(env) & CC_Z), a2e3);
+        }
+        break;
+
+    case 0x682b:
+        {
+            static int poll_count = 0;
+            if (poll_count++ < 5) {
+                uint16_t a2e3 = 0;
+                cpu_physical_memory_read(0xfedba2e3, &a2e3, 2);
+                m200_dump_core(env, tag, "Step8 loop 682b TESTB $0x40, [A2E3]");
+                fprintf(stderr, "   [STEP8 POLL #%d] A2E3=%04x (bit6=%d)\n",
+                        poll_count, a2e3, !!(a2e3 & 0x40));
+            }
+        }
+        break;
+
+    case 0x6830:
+        m200_dump_core(env, tag, "Step8 6830 JE 0x6834 (check ZF after testb 40)");
+        break;
+
+    case 0x6834:
+        m200_dump_core(env, tag, "Step8 SUCCESS: bit6 cleared, jumping to logo (0xDF2B)!");
+        break;
+
+    case 0x6853:
+        m200_dump_core(env, tag, "Step8 JE TAKEN: CMOS 4D bit1==0, setting mode 3 (text mode)");
+        break;
+
+    case 0x685f:
+        m200_dump_core(env, tag, "Step8 epilogue BX=1400h, BEFORE lret");
+        break;
+
+    case 0x6862:
+        m200_dump_core(env, tag, "Step8 epilogue LRET to Dispatcher");
+        break;
+
+    case 0x2880:
+        m200_dump_core(env, tag, "0x2880: check bit 31 of EDX before call 28a9/c147");
+        break;
+    case 0x2890:
+        m200_dump_core(env, tag, "0x2890: synchronous call to 28a9");
+        break;
+    case 0x2895:
+        m200_dump_core(env, tag, "0x2895: async scheduler enqueue of 28a9 via c147");
+        break;
+    case 0x28a9:
+        m200_dump_core(env, tag, "0x28a9: entry of display task callback");
+        break;
+    case 0x28dd:
+        {
+            uint16_t a2e3 = 0;
+            cpu_physical_memory_read(0xfedba2e3, &a2e3, 2);
+            m200_dump_core(env, tag, "0x28dd: BEFORE test %ax, [a2e3] (check sem 0x40)");
+            fprintf(stderr, "   [SEM40 CHECK @ 28DD] AX=%04x A2E3=%04x\n", (uint16_t)env->regs[R_EAX], a2e3);
+        }
+        break;
+    case 0x28e6:
+        m200_dump_core(env, tag, "0x28e6: EARLY RET from 28a9! Semaphore 0x40 already held!");
+        break;
+    case 0x28e7:
+        m200_dump_core(env, tag, "0x28e7: ACQUIRING semaphore 0x40 via call c39a");
+        break;
+    case 0x29bb:
+        m200_dump_core(env, tag, "0x29bb: loop check at 29bb");
+        break;
+    case 0x29f5:
+        m200_dump_core(env, tag, "0x29f5: RELEASING semaphore 0x40 via jmp c3af");
+        break;
+
     default:
+        if ((uint16_t)env->segs[R_CS].selector == 0x0030 && tag >= 0x2780 && tag <= 0x2a50) {
+            fprintf(stderr,
+                    "  [MOD3 TASK] IP=%04x AX=%04x BX=%04x CX=%04x DX=%04x SI=%04x DI=%04x SP=%04x\n",
+                    tag,
+                    (uint16_t)env->regs[R_EAX], (uint16_t)env->regs[R_EBX],
+                    (uint16_t)env->regs[R_ECX], (uint16_t)env->regs[R_EDX],
+                    (uint16_t)env->regs[R_ESI], (uint16_t)env->regs[R_EDI],
+                    (uint16_t)env->regs[R_ESP]);
+        }
+        if ((uint16_t)env->segs[R_CS].selector == 0x0048 &&
+            (((tag >= 0x3420 && tag <= 0x3470) || tag == 0x0041 ||
+              (tag >= 0x62e0 && tag <= 0x6300) || (tag >= 0xe470 && tag <= 0xe4a0)))) {
+            fprintf(stderr,
+                    "  [MOD2 DISP] IP=%04x AX=%04x BX=%04x CX=%04x DX=%04x SI=%04x DI=%04x SP=%04x\n",
+                    tag,
+                    (uint16_t)env->regs[R_EAX], (uint16_t)env->regs[R_EBX],
+                    (uint16_t)env->regs[R_ECX], (uint16_t)env->regs[R_EDX],
+                    (uint16_t)env->regs[R_ESI], (uint16_t)env->regs[R_EDI],
+                    (uint16_t)env->regs[R_ESP]);
+        }
         if (tag >= 0x6840 && tag <= 0x6930) {
             fprintf(stderr,
                     "  [STEP0 EARLY] IP=%04x CS=%04x base=%08x EDI=%08x ESP=%08x\n",
