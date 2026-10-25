@@ -1117,11 +1117,77 @@ void nv34m_dump_screen_ppm(const char *filename)
         {255,  85,  85}, {255,  85, 255}, {255, 255,  85}, {255, 255, 255}
     };
 
+    if (global_nv34m_state->native_scanout_active || global_nv34m_state->native_scanout_test) {
+        int width = global_nv34m_state->active_hdisplay ? global_nv34m_state->active_hdisplay : NV34M_NATIVE_PANEL_WIDTH;
+        int height = global_nv34m_state->active_vdisplay ? global_nv34m_state->active_vdisplay : NV34M_NATIVE_PANEL_HEIGHT;
+        uint32_t offset = global_nv34m_state->native_fb_offset;
+        fprintf(fp, "P6\n%d %d\n255\n", width, height);
+        for (int y = 0; y < height; y++) {
+            uint32_t row_off = offset + y * width * 4;
+            for (int x = 0; x < width; x++) {
+                uint32_t px_off = row_off + x * 4;
+                uint8_t b = vga->vram_ptr[px_off + 0];
+                uint8_t g = vga->vram_ptr[px_off + 1];
+                uint8_t r = vga->vram_ptr[px_off + 2];
+                fputc(r, fp);
+                fputc(g, fp);
+                fputc(b, fp);
+            }
+        }
+        fclose(fp);
+        return;
+    }
+
     bool is_graphic = (vga->gr[VGA_GFX_MISC] & 1);
+    uint32_t start_addr = (vga->cr[VGA_CRTC_START_LO] | (vga->cr[VGA_CRTC_START_HI] << 8)) * 4;
+
+    if (!is_graphic) {
+        /* Standard VGA Mode 03h 80x25 text mode (640x400) */
+        int width = 640;
+        int height = 400;
+        fprintf(stderr, "[NV34M DUMP SCREEN] TEXT MODE 80x25 file=%s res=%dx%d start_addr=%05x\n",
+                filename, width, height, start_addr);
+        fprintf(fp, "P6\n%d %d\n255\n", width, height);
+
+        for (int y = 0; y < height; y++) {
+            int row = y / 16;
+            int glyph_y = y % 16;
+            for (int x = 0; x < width; x++) {
+                int col = x / 8;
+                int glyph_x = x % 8;
+                uint32_t cell = start_addr + (row * 80 + col) * 4;
+                uint8_t ch = vga->vram_ptr[cell + 0];
+                uint8_t attr = vga->vram_ptr[cell + 1];
+
+                /* Font glyph byte from Plane 2 */
+                uint8_t font_byte = vga->vram_ptr[2 + (ch * 32 + glyph_y) * 4];
+                if (font_byte == 0 && vga_font8x16[ch * 16 + glyph_y] != 0) {
+                    font_byte = vga_font8x16[ch * 16 + glyph_y];
+                }
+
+                bool pixel = (font_byte >> (7 - glyph_x)) & 1;
+                uint8_t color_idx = pixel ? (attr & 0x0f) : ((attr >> 4) & 0x0f);
+                uint8_t dac_idx = vga->ar[color_idx & 0x0f] & 0x3f;
+                uint8_t r = ((vga->palette[dac_idx * 3 + 0] & 0x3f) * 255) / 63;
+                uint8_t g = ((vga->palette[dac_idx * 3 + 1] & 0x3f) * 255) / 63;
+                uint8_t b = ((vga->palette[dac_idx * 3 + 2] & 0x3f) * 255) / 63;
+                if (r == 0 && g == 0 && b == 0 && color_idx != 0) {
+                    r = default_ega_palette[color_idx & 0x0f][0];
+                    g = default_ega_palette[color_idx & 0x0f][1];
+                    b = default_ega_palette[color_idx & 0x0f][2];
+                }
+                fputc(r, fp);
+                fputc(g, fp);
+                fputc(b, fp);
+            }
+        }
+        fclose(fp);
+        return;
+    }
+
     int width = 640;
     int height = 480;
     int line_offset = vga->cr[VGA_CRTC_OFFSET] << 3;
-    uint32_t start_addr = (vga->cr[VGA_CRTC_START_LO] | (vga->cr[VGA_CRTC_START_HI] << 8)) * 4;
 
     if (vga->get_resolution) {
         vga->get_resolution(vga, &width, &height);
@@ -1182,6 +1248,13 @@ void nv34m_log_vga_ioport_read(uint32_t addr, uint32_t val)
 
 void nv34m_log_vga_ioport_write(uint32_t addr, uint32_t val)
 {
+    static int trace_ioport = -1;
+    if (trace_ioport == -1) {
+        trace_ioport = (getenv("NV34M_IOPORT_TRACE") != NULL);
+    }
+    if (!trace_ioport) {
+        return;
+    }
     switch (addr) {
     case 0x3c2:
         fprintf(stderr, "[VGA MISC W] val=0x%02x (clk=%u, io_addr=%s, ram_en=%u)\n",

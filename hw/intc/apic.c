@@ -184,6 +184,14 @@ static void apic_local_deliver(APICCommonState *s, int vector)
 
 void apic_deliver_pic_intr(APICCommonState *s, int level)
 {
+    if (!(s->spurious_vec & APIC_SPURIO_ENABLED)) {
+        if (level) {
+            cpu_interrupt(CPU(s->cpu), CPU_INTERRUPT_HARD);
+        } else {
+            cpu_reset_interrupt(CPU(s->cpu), CPU_INTERRUPT_HARD);
+        }
+        return;
+    }
     if (level) {
         apic_local_deliver(s, APIC_LVT_LINT0);
     } else {
@@ -747,6 +755,7 @@ int apic_accept_pic_intr(APICCommonState *s)
     lvt0 = s->lvt[APIC_LVT_LINT0];
 
     if ((s->apicbase & MSR_IA32_APICBASE_ENABLE) == 0 ||
+        !(s->spurious_vec & APIC_SPURIO_ENABLED) ||
         (lvt0 & APIC_LVT_MASKED) == 0)
         return isa_pic != NULL;
 

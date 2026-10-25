@@ -167,6 +167,7 @@ static inline int load_segment_ra(CPUX86State *env, uint32_t *e1_ptr,
     ptr = dt->base + index;
     *e1_ptr = cpu_ldl_kernel_ra(env, ptr, retaddr);
     *e2_ptr = cpu_ldl_kernel_ra(env, ptr + 4, retaddr);
+#if 0
     /* Diagnostic: compare TLB path vs physical path for High SMRAM addresses */
     if (ptr >= 0xFED00000 && ptr < 0xFEE00000) {
         uint32_t phys_e1 = 0, phys_e2 = 0;
@@ -192,6 +193,7 @@ static inline int load_segment_ra(CPUX86State *env, uint32_t *e1_ptr,
                 !!(env->cr[0] & CR0_PE_MASK),
                 !!(env->cr[0] & CR0_PG_MASK));
     }
+#endif
     return 0;
 }
 

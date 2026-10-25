@@ -898,10 +898,12 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
                     edi, (uint16_t)env->segs[R_SS].selector, ss_base);
         }
         if (esp != m200_last_esp) {
-            fprintf(stderr,
-                    "  [STEP0 ESPΔ] %04x:%08x  ESP %08x -> %08x  (Δ=%+d) EDI=%08x\n",
-                    (uint16_t)env->segs[R_CS].selector, (uint32_t)env->eip,
-                    m200_last_esp, esp, (int32_t)(esp - m200_last_esp), edi);
+            if (getenv("M200_STEP0_TRACE")) {
+                fprintf(stderr,
+                        "  [STEP0 ESPΔ] %04x:%08x  ESP %08x -> %08x  (Δ=%+d) EDI=%08x\n",
+                        (uint16_t)env->segs[R_CS].selector, (uint32_t)env->eip,
+                        m200_last_esp, esp, (int32_t)(esp - m200_last_esp), edi);
+            }
             m200_last_esp = esp;
         }
         return;
@@ -911,13 +913,15 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
     if (m200_step0_phase == 2 && tag != 0x6aad && tag != 0x6c0a) {
         if (sp != m200_last_sp || esp != m200_last_esp ||
             (uint16_t)env->segs[R_SS].selector != m200_ss_sel_at_push) {
-            fprintf(stderr,
-                    "  [STEP0 STACKEVT #%d] %04x:%08x SP %04x->%04x ESP %08x->%08x "
-                    "SS=%04x EDI=%08x\n",
-                    ++m200_stack_evt,
-                    (uint16_t)env->segs[R_CS].selector, (uint32_t)env->eip,
-                    m200_last_sp, sp, m200_last_esp, esp,
-                    (uint16_t)env->segs[R_SS].selector, edi);
+            if (getenv("M200_STEP0_TRACE")) {
+                fprintf(stderr,
+                        "  [STEP0 STACKEVT #%d] %04x:%08x SP %04x->%04x ESP %08x->%08x "
+                        "SS=%04x EDI=%08x\n",
+                        ++m200_stack_evt,
+                        (uint16_t)env->segs[R_CS].selector, (uint32_t)env->eip,
+                        m200_last_sp, sp, m200_last_esp, esp,
+                        (uint16_t)env->segs[R_SS].selector, edi);
+            }
             m200_last_sp = sp;
             m200_last_esp = esp;
         }
@@ -1306,25 +1310,27 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
         break;
 
     default:
-        if ((uint16_t)env->segs[R_CS].selector == 0x0030 && tag >= 0x2780 && tag <= 0x2a50) {
-            fprintf(stderr,
-                    "  [MOD3 TASK] IP=%04x AX=%04x BX=%04x CX=%04x DX=%04x SI=%04x DI=%04x SP=%04x\n",
-                    tag,
-                    (uint16_t)env->regs[R_EAX], (uint16_t)env->regs[R_EBX],
-                    (uint16_t)env->regs[R_ECX], (uint16_t)env->regs[R_EDX],
-                    (uint16_t)env->regs[R_ESI], (uint16_t)env->regs[R_EDI],
-                    (uint16_t)env->regs[R_ESP]);
-        }
-        if ((uint16_t)env->segs[R_CS].selector == 0x0048 &&
-            (((tag >= 0x3420 && tag <= 0x3470) || tag == 0x0041 ||
-              (tag >= 0x62e0 && tag <= 0x6300) || (tag >= 0xe470 && tag <= 0xe4a0)))) {
-            fprintf(stderr,
-                    "  [MOD2 DISP] IP=%04x AX=%04x BX=%04x CX=%04x DX=%04x SI=%04x DI=%04x SP=%04x\n",
-                    tag,
-                    (uint16_t)env->regs[R_EAX], (uint16_t)env->regs[R_EBX],
-                    (uint16_t)env->regs[R_ECX], (uint16_t)env->regs[R_EDX],
-                    (uint16_t)env->regs[R_ESI], (uint16_t)env->regs[R_EDI],
-                    (uint16_t)env->regs[R_ESP]);
+        if (getenv("M200_DISP_TRACE")) {
+            if ((uint16_t)env->segs[R_CS].selector == 0x0030 && tag >= 0x2780 && tag <= 0x2a50) {
+                fprintf(stderr,
+                        "  [MOD3 TASK] IP=%04x AX=%04x BX=%04x CX=%04x DX=%04x SI=%04x DI=%04x SP=%04x\n",
+                        tag,
+                        (uint16_t)env->regs[R_EAX], (uint16_t)env->regs[R_EBX],
+                        (uint16_t)env->regs[R_ECX], (uint16_t)env->regs[R_EDX],
+                        (uint16_t)env->regs[R_ESI], (uint16_t)env->regs[R_EDI],
+                        (uint16_t)env->regs[R_ESP]);
+            }
+            if ((uint16_t)env->segs[R_CS].selector == 0x0048 &&
+                (((tag >= 0x3420 && tag <= 0x3470) || tag == 0x0041 ||
+                  (tag >= 0x62e0 && tag <= 0x6300) || (tag >= 0xe470 && tag <= 0xe4a0)))) {
+                fprintf(stderr,
+                        "  [MOD2 DISP] IP=%04x AX=%04x BX=%04x CX=%04x DX=%04x SI=%04x DI=%04x SP=%04x\n",
+                        tag,
+                        (uint16_t)env->regs[R_EAX], (uint16_t)env->regs[R_EBX],
+                        (uint16_t)env->regs[R_ECX], (uint16_t)env->regs[R_EDX],
+                        (uint16_t)env->regs[R_ESI], (uint16_t)env->regs[R_EDI],
+                        (uint16_t)env->regs[R_ESP]);
+            }
         }
         if (tag == 0x2c72 || tag == 0x2cba || tag == 0x2cca || tag == 0x2c85) {
             static uint32_t probe_2c_cnt = 0;

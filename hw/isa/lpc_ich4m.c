@@ -182,9 +182,12 @@ static void ich4m_apm_ctrl_changed(uint32_t val, void *arg)
         (ICH4M_PMIO_SMI_EN_GBL_SMI_EN | ICH4M_PMIO_SMI_EN_APMC_EN)) {
         cpu = current_cpu ? current_cpu : first_cpu;
         if (getenv("M200_SMI_TRACE")) {
+            X86CPU *x86_cpu = X86_CPU(cpu);
+            CPUX86State *env = &x86_cpu->env;
             fprintf(stderr,
-                    "[ICH4M APMC SMI] cmd=%02x EN=%08x STS=%08x assert=%d\n",
-                    val, lpc->pm.smi_en, lpc->pm.smi_sts, cpu != NULL);
+                    "[ICH4M APMC SMI] cmd=%02x CS:EIP=%04x:%08x EBX=%08x EN=%08x STS=%08x assert=%d\n",
+                    val, env->segs[R_CS].selector, (uint32_t)env->eip, (uint32_t)env->regs[R_EBX],
+                    lpc->pm.smi_en, lpc->pm.smi_sts, cpu != NULL);
         }
         if (cpu) {
             cpu_interrupt(cpu, CPU_INTERRUPT_SMI);

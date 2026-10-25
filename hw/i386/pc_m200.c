@@ -93,6 +93,17 @@ void *pc_m200_get_high_smram_ptr(void)
     return NULL;
 }
 
+static QEMUTimer *m200_bda_timer = NULL;
+
+static void m200_bda_timer_cb(void *opaque)
+{
+    uint32_t ticks = 0;
+    cpu_physical_memory_read(0x46c, &ticks, 4);
+    ticks++;
+    cpu_physical_memory_write(0x46c, &ticks, 4);
+    timer_mod(m200_bda_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 55);
+}
+
 static QEMUTimer *m200_heartbeat_timer = NULL;
 static int m200_heartbeat_sec = 0;
 
@@ -118,13 +129,16 @@ static void m200_heartbeat_cb(void *opaque)
     cpu_physical_memory_read(0xfedba02a, &a02a, 2);
     cpu_physical_memory_read(0xfedba2fc, &a2fc, 2);
 
-    fprintf(stderr, "[M200 HEARTBEAT #%d] CS:EIP=%04x:%08x (base=%08x) SS:ESP=%04x:%08x\n",
+    uint32_t bda_46c = 0;
+    cpu_physical_memory_read(0x46c, &bda_46c, 4);
+    fprintf(stderr, "[M200 HEARTBEAT #%d] CS:EIP=%04x:%08x (base=%08x) SS:ESP=%04x:%08x BDA_46C=%u\n",
             m200_heartbeat_sec,
             env ? env->segs[R_CS].selector : 0,
             env ? (uint32_t)env->eip : 0,
             env ? (uint32_t)env->segs[R_CS].base : 0,
             env ? env->segs[R_SS].selector : 0,
-            env ? (uint32_t)env->regs[R_ESP] : 0);
+            env ? (uint32_t)env->regs[R_ESP] : 0,
+            bda_46c);
     if (env) {
         fprintf(stderr, "   EAX=%08x EBX=%08x ECX=%08x EDX=%08x ESI=%08x EDI=%08x EBP=%08x FLAGS=%08x\n",
                 (uint32_t)env->regs[R_EAX], (uint32_t)env->regs[R_EBX],
@@ -1891,6 +1905,10 @@ static void m200_init(MachineState *machine)
     /* Real-time Heartbeat Diagnostic Timer */
     m200_heartbeat_timer = timer_new_ms(QEMU_CLOCK_REALTIME, m200_heartbeat_cb, NULL);
     timer_mod(m200_heartbeat_timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 1000);
+
+    /* 18.2 Hz (55ms) BIOS Data Area Timer Tick */
+    m200_bda_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL, m200_bda_timer_cb, NULL);
+    timer_mod(m200_bda_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 55);
 
     qemu_register_reset(pc_m200_reset_handler, x86ms);
 }
