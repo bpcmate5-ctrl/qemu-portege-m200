@@ -23,3 +23,15 @@ GTAGS
 
 *.log
 
+
+# M200 local debug scratch and large images
+scratch/
+m200-data/*.qcow2
+m200-data/*.raw
+m200-data/*.img
+m200-data/*.zip
+m200-data/*.PDF
+m200-data/*.pdf
+m200-data/M200DATASHEETS/
+m200-data/M200GT_REAL_V22/
+m200-data/Toshiba_M200_AllBiosUpdates_and_DiagnosticTool/

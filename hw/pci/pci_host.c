@@ -76,6 +76,12 @@ static bool is_pci_dev_ejected(PCIDevice *pci_dev)
 void pci_host_config_write_common(PCIDevice *pci_dev, uint32_t addr,
                                   uint32_t limit, uint32_t val, uint32_t len)
 {
+    if (getenv("M200_FUNC_DIS_TRACE") && pci_dev &&
+        pci_dev_bus_num(pci_dev) == 0 && pci_dev->devfn == PCI_DEVFN(31, 3)) {
+        fprintf(stderr,
+                "[M200 SMBUS CFG W] 00:1f.3 off=%02x len=%u val=%08x enabled=%d\n",
+                addr, len, val, pci_dev->enabled);
+    }
     pci_adjust_config_limit(pci_get_bus(pci_dev), &limit);
     if (limit <= addr) {
         return;
@@ -100,6 +106,13 @@ uint32_t pci_host_config_read_common(PCIDevice *pci_dev, uint32_t addr,
                                      uint32_t limit, uint32_t len)
 {
     uint32_t ret;
+
+    if (getenv("M200_FUNC_DIS_TRACE") && pci_dev &&
+        pci_dev_bus_num(pci_dev) == 0 && pci_dev->devfn == PCI_DEVFN(31, 3)) {
+        fprintf(stderr,
+                "[M200 SMBUS CFG R] 00:1f.3 off=%02x len=%u enabled=%d\n",
+                addr, len, pci_dev->enabled);
+    }
 
     pci_adjust_config_limit(pci_get_bus(pci_dev), &limit);
     if (limit <= addr) {
@@ -130,6 +143,15 @@ void pci_data_write(PCIBus *s, uint32_t addr, uint32_t val, unsigned len)
     uint8_t bus_num = addr >> 16;
     uint8_t devfn = addr >> 8;
 
+    if (getenv("M200_SCHED_PCI_TRACE") && bus_num == 2 &&
+        devfn == PCI_DEVFN(4, 0)) {
+        fprintf(stderr,
+                "[M200 SCHED PCI W] %02x:%02x.%u off=%02x len=%u "
+                "val=%08x dev=%s\n",
+                bus_num, PCI_SLOT(devfn), PCI_FUNC(devfn), config_addr,
+                len, val, pci_dev ? pci_dev->name : "NONE");
+    }
+
     if (pci_dev || bus_num <= 1) {
         fprintf(stderr, "[PCI CFG W] %02x:%02x.%d offset=0x%02x val=0x%x len=%d (dev=%s)\n",
                 bus_num, PCI_SLOT(devfn), PCI_FUNC(devfn), config_addr, val, len,
@@ -158,6 +180,15 @@ uint32_t pci_data_read(PCIBus *s, uint32_t addr, unsigned len)
     if (pci_dev) {
         val = pci_host_config_read_common(pci_dev, config_addr,
                                           PCI_CONFIG_SPACE_SIZE, len);
+    }
+
+    if (getenv("M200_SCHED_PCI_TRACE") && bus_num == 2 &&
+        devfn == PCI_DEVFN(4, 0)) {
+        fprintf(stderr,
+                "[M200 SCHED PCI R] %02x:%02x.%u off=%02x len=%u "
+                "val=%08x dev=%s\n",
+                bus_num, PCI_SLOT(devfn), PCI_FUNC(devfn), config_addr,
+                len, val, pci_dev ? pci_dev->name : "NONE");
     }
 
     if (pci_dev || (bus_num <= 1 && config_addr == 0)) {

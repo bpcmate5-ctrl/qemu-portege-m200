@@ -46,6 +46,9 @@
 #include "qemu/timer.h"
 #include "hw/core/loader.h"
 
+/* DIAGNOSTIC ONLY; implemented by the M200 TCG probe code. */
+extern void m200_f108_timing_external(uint16_t kind, uint16_t value);
+
 /* Toshiba Portege M200 Motherboard Straps & Hardware ID (Port 0x85) */
 static uint8_t toshiba_m200_port85 = 0x00;
 static uint8_t *toshiba_system_ram = NULL;
@@ -68,12 +71,6 @@ void *pc_m200_get_high_smram_ptr(void)
         return memory_region_get_ram_ptr(g_high_smram);
     }
     return NULL;
-}
-
-/* Compatibility for the existing passive M200 translator instrumentation. */
-void *pc_m200_get_tseg_ptr(void)
-{
-    return pc_m200_get_high_smram_ptr();
 }
 
 static uint64_t toshiba_m200_io_read(void *opaque, hwaddr addr, unsigned size)
@@ -760,6 +757,8 @@ static void m200_smbus_transaction_complete(void *opaque)
         /* Address NACK is reported as DEV_ERR, not as a bus timeout. */
         s->hst_sts |= M200_SMB_STS_DEV_ERR;
     }
+    m200_f108_timing_external(11,
+                              ((uint16_t)s->active_slva << 8) | s->hst_sts);
     if (getenv("M200_ICOUNT_TIMER_TRACE")) {
         fprintf(stderr,
                 "[M200-ICOUNT-TIMER] SMBUS slva=%02x scheduled=%" PRId64
@@ -815,8 +814,10 @@ static uint64_t toshiba_smbus_read(void *opaque, hwaddr addr, unsigned size)
     switch (addr) {
     case 0x00: /* HST_STS */
         val = s->hst_sts;
-        if (val & M200_SMB_STS_HOST_BUSY) {
+        if ((val & M200_SMB_STS_HOST_BUSY) && !s->busy_observed) {
             s->busy_observed = true;
+            m200_f108_timing_external(12,
+                                      ((uint16_t)s->active_slva << 8) | val);
         }
         break;
     case 0x02: /* HST_CNT */
@@ -887,6 +888,10 @@ static void toshiba_smbus_write(void *opaque, hwaddr addr, uint64_t val, unsigne
             s->transaction_pending = true;
             s->busy_observed = false;
             s->hst_sts |= M200_SMB_STS_HOST_BUSY;
+            m200_f108_timing_external(10,
+                                      ((uint16_t)s->active_slva << 8) |
+                                      s->hst_sts);
+
             switch ((val >> 2) & 7) {
             case 0: wire_bytes = 1; break; /* quick */
             case 1: wire_bytes = 2; break; /* byte */
@@ -1296,6 +1301,12 @@ static void m200_init(MachineState *machine)
                 high_ptr[0x139af] = 0x01;
                 high_ptr[0x1a140] = 0x08;
                 high_ptr[0x19fbf] = 0x40;
+                if (getenv("M200_DIAGNOSTIC_OVERRIDES")) {
+                    high_ptr[0x1a619] = 0x80;
+                    high_ptr[0x1a0b1] = 0x01;
+                    high_ptr[0x1a11b] = 0x01;
+                    high_ptr[0x19ef0] = 0x05;
+                }
                 /* Pre-configure Selector 0x30 and 0x38 to point to 0xFEDA0000 */
                 gdt_dest[0x32] = 0x00; gdt_dest[0x34] = 0xda; gdt_dest[0x37] = 0xfe;
                 gdt_dest[0x3a] = 0x00; gdt_dest[0x3c] = 0xda; gdt_dest[0x3f] = 0xfe;
@@ -1349,6 +1360,20 @@ static void m200_init(MachineState *machine)
                 ptr[0xfff2] = 0x29;
                 ptr[0xfff3] = 0x00;
                 ptr[0xfff4] = 0xf0; /* ljmp $0xF000, $0x291C (Authentic Module 2 Cold POST Entry) */
+
+                if (getenv("M200_DIAGNOSTIC_OVERRIDES")) {
+                    /* TEMPORARY PHYSICAL-GROUND-TRUTH DIAGNOSTIC OVERRIDE */
+                    ptr[0x00b4] = 0x01;
+                    ptr[0x00b5] = 0x02;
+                    ptr[0x00b6] = 0x01;
+                    ptr[0x00b7] = 0x00;
+                    ptr[0x00b8] = 0x81;
+                    ptr[0x00b9] = 0x05;
+                    ptr[0x00ba] = 0x05;
+                    ptr[0x00bb] = 0x22;
+                    ptr[0x00bc] = 0x04;
+                    ptr[0x008f] = 0x28;
+                }
 
                 fclose(f);
             }

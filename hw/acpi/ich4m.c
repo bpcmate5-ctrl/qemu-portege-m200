@@ -55,6 +55,11 @@ void ich4m_pm_update_periodic_timer(ICH4MLPCPMRegs *pm)
     unsigned sel = pci_get_word(lpc->d.config + ICH4M_LPC_GEN_PMCON_1) & 3;
     int64_t period_ns = 8LL * (1 << (3 - sel)) * NANOSECONDS_PER_SECOND;
 
+    if (getenv("M200_PERIODIC_SMI_RATE_TEST")) {
+        /* Diagnostic timing acceleration only; never an architectural rate. */
+        period_ns = 100 * 1000000LL;
+    }
+
     if (pm->smi_en & ICH4M_PMIO_SMI_EN_PERIODIC_EN) {
         timer_mod(pm->periodic_timer,
                   qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + period_ns);

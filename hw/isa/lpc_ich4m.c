@@ -246,6 +246,7 @@ static void ich4m_lpc_config_write(PCIDevice *d,
 
         if (lpc->smbus_pci_dev) {
             pci_set_enabled(lpc->smbus_pci_dev,
+                            getenv("M200_FUNC_DIS_LEGACY_VISIBLE") ||
                             !(func_dis & ICH4M_LPC_FUNC_DIS_SMBUS));
         }
         if (getenv("M200_FUNC_DIS_TRACE") && old_func_dis != func_dis) {
@@ -265,6 +266,7 @@ static void ich4m_lpc_update_func_dis(ICH4MLPCState *lpc)
 
     if (lpc->smbus_pci_dev) {
         pci_set_enabled(lpc->smbus_pci_dev,
+                        getenv("M200_FUNC_DIS_LEGACY_VISIBLE") ||
                         !(func_dis & ICH4M_LPC_FUNC_DIS_SMBUS));
     }
 }
