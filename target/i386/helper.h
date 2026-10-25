@@ -210,3 +210,9 @@ DEF_HELPER_1(emms, void, env)
 #include "tcg/ops_sse_header.h.inc"
 
 DEF_HELPER_1(rdrand, tl, env)
+
+#ifndef CONFIG_USER_ONLY
+/* M200 Step0 EDI/ESP preservation diagnostics */
+DEF_HELPER_2(m200_step0_probe, void, env, i32)
+DEF_HELPER_2(m200_f108_profile, void, env, i32)
+#endif

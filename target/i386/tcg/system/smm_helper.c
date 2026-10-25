@@ -52,6 +52,25 @@ void do_smm_enter(X86CPU *cpu)
     }
 
     sm_state = env->smbase + 0x8000;
+    if (getenv("M200_SMI_TRACE")) {
+        fprintf(stderr,
+                "[X86 SMM ENTER] SMBASE=%08x entry=%08" PRIx64
+                " return=%04x:%08x EAX=%08x EBX=%08x ECX=%08x EDX=%08x"
+                " ESI=%08x EDI=%08x ESP=%08x EBP=%08x EFLAGS=%08x"
+                " DS=%04x ES=%04x SS=%04x bytes=",
+                env->smbase, (uint64_t)sm_state, env->segs[R_CS].selector,
+                (uint32_t)env->eip, (uint32_t)env->regs[R_EAX],
+                (uint32_t)env->regs[R_EBX], (uint32_t)env->regs[R_ECX],
+                (uint32_t)env->regs[R_EDX], (uint32_t)env->regs[R_ESI],
+                (uint32_t)env->regs[R_EDI], (uint32_t)env->regs[R_ESP],
+                (uint32_t)env->regs[R_EBP], cpu_compute_eflags(env),
+                env->segs[R_DS].selector, env->segs[R_ES].selector,
+                env->segs[R_SS].selector);
+        for (i = 0; i < 16; i++) {
+            fprintf(stderr, "%02x", x86_ldub_phys(cs, sm_state + i));
+        }
+        fputc('\n', stderr);
+    }
 
 #ifdef TARGET_X86_64
     for (i = 0; i < 6; i++) {
@@ -200,6 +219,17 @@ void helper_rsm(CPUX86State *env)
     uint32_t val;
 
     sm_state = env->smbase + 0x8000;
+    if (getenv("M200_SMI_TRACE")) {
+#ifdef TARGET_X86_64
+        uint64_t saved_eax = x86_ldq_phys(cs, sm_state + 0x7ff8);
+#else
+        uint32_t saved_eax = x86_ldl_phys(cs, sm_state + 0x7fd0);
+#endif
+        fprintf(stderr,
+                "[X86 RSM BEFORE] SMBASE=%08x saved_EAX=%08x AH=%02x\n",
+                env->smbase, (uint32_t)saved_eax,
+                (uint8_t)(saved_eax >> 8));
+    }
 #ifdef TARGET_X86_64
     cpu_load_efer(env, x86_ldq_phys(cs, sm_state + 0x7ed0));
 
@@ -313,6 +343,14 @@ void helper_rsm(CPUX86State *env)
     }
     env->hflags2 &= ~HF2_SMM_INSIDE_NMI_MASK;
     env->hflags &= ~HF_SMM_MASK;
+
+    if (getenv("M200_SMI_TRACE")) {
+        fprintf(stderr,
+                "[X86 RSM AFTER] return=%04x:%08x EAX=%08x AH=%02x SMM=0\n",
+                env->segs[R_CS].selector, (uint32_t)env->eip,
+                (uint32_t)env->regs[R_EAX],
+                (uint8_t)(env->regs[R_EAX] >> 8));
+    }
 
     qemu_log_mask(CPU_LOG_INT, "SMM: after RSM\n");
     log_cpu_state_mask(CPU_LOG_INT, CPU(cpu), CPU_DUMP_CCOP);

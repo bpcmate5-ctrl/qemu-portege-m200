@@ -25,6 +25,10 @@
 #include "helper-tcg.h"
 #include "qemu/plugin.h"
 
+#if !defined(CONFIG_USER_ONLY)
+extern int m200_step0_phase;
+#endif
+
 G_NORETURN void helper_raise_interrupt(CPUX86State *env, int intno,
                                           int next_eip_addend)
 {
@@ -136,8 +140,69 @@ void raise_interrupt2(CPUX86State *env, int intno,
         }
         fprintf(stderr, "============================================================\n");
     }
+    if (intno == 0x0d) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [#GP EXCEPTION 0x0D DETECTED] CS:EIP = %04x:%08x (CS_BASE = 0x%08x)\n"
+                        "   EAX = 0x%08x  EBX = 0x%08x  ECX = 0x%08x  EDX = 0x%08x\n"
+                        "   ESI = 0x%08x  EDI = 0x%08x  EBP = 0x%08x  ESP = 0x%08x\n"
+                        "============================================================\n",
+                (uint16_t)env->segs[R_CS].selector, (uint32_t)env->eip,
+                (uint32_t)env->segs[R_CS].base,
+                (uint32_t)env->regs[R_EAX], (uint32_t)env->regs[R_EBX],
+                (uint32_t)env->regs[R_ECX], (uint32_t)env->regs[R_EDX],
+                (uint32_t)env->regs[R_ESI], (uint32_t)env->regs[R_EDI],
+                (uint32_t)env->regs[R_EBP], (uint32_t)env->regs[R_ESP]);
+    }
+    if (intno == 0x19) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   >>> [BOOT BOUNDARY INT 19h REACHED] <<<\n"
+                        "============================================================\n");
+        uint16_t ivt_10_off = 0, ivt_10_seg = 0;
+        uint16_t ivt_13_off = 0, ivt_13_seg = 0;
+        uint16_t ivt_15_off = 0, ivt_15_seg = 0;
+        uint16_t ivt_19_off = 0, ivt_19_seg = 0;
+        uint16_t ivt_1a_off = 0, ivt_1a_seg = 0;
+        uint16_t vbios_c0214 = 0;
+
+        cpu_physical_memory_read(0x10 * 4, &ivt_10_off, 2);
+        cpu_physical_memory_read(0x10 * 4 + 2, &ivt_10_seg, 2);
+        cpu_physical_memory_read(0x13 * 4, &ivt_13_off, 2);
+        cpu_physical_memory_read(0x13 * 4 + 2, &ivt_13_seg, 2);
+        cpu_physical_memory_read(0x15 * 4, &ivt_15_off, 2);
+        cpu_physical_memory_read(0x15 * 4 + 2, &ivt_15_seg, 2);
+        cpu_physical_memory_read(0x19 * 4, &ivt_19_off, 2);
+        cpu_physical_memory_read(0x19 * 4 + 2, &ivt_19_seg, 2);
+        cpu_physical_memory_read(0x1a * 4, &ivt_1a_off, 2);
+        cpu_physical_memory_read(0x1a * 4 + 2, &ivt_1a_seg, 2);
+        cpu_physical_memory_read(0xc0214, &vbios_c0214, 2);
+
+        fprintf(stderr, "   [QEMU IVT INT 10h] = %04X:%04X (Linear 0x%08X)\n",
+                ivt_10_seg, ivt_10_off, (ivt_10_seg << 4) + ivt_10_off);
+        fprintf(stderr, "   [QEMU IVT INT 13h] = %04X:%04X (Linear 0x%08X)\n",
+                ivt_13_seg, ivt_13_off, (ivt_13_seg << 4) + ivt_13_off);
+        fprintf(stderr, "   [QEMU IVT INT 15h] = %04X:%04X (Linear 0x%08X)\n",
+                ivt_15_seg, ivt_15_off, (ivt_15_seg << 4) + ivt_15_off);
+        fprintf(stderr, "   [QEMU IVT INT 19h] = %04X:%04X (Linear 0x%08X)\n",
+                ivt_19_seg, ivt_19_off, (ivt_19_seg << 4) + ivt_19_off);
+        fprintf(stderr, "   [QEMU IVT INT 1Ah] = %04X:%04X (Linear 0x%08X)\n",
+                ivt_1a_seg, ivt_1a_off, (ivt_1a_seg << 4) + ivt_1a_off);
+        fprintf(stderr, "   [QEMU VBIOS C0214] = 0x%04X\n", vbios_c0214);
+        fprintf(stderr, "============================================================\n");
+    }
     fprintf(stderr, "[EXCP] intno=0x%02x is_int=%d err=0x%x eip=0x%08"PRIx64" cs_base=0x%08"PRIx64"\n",
             intno, is_int, error_code, (uint64_t)env->eip, (uint64_t)env->segs[R_CS].base);
+
+#if !defined(CONFIG_USER_ONLY)
+    if (m200_step0_phase) {
+        fprintf(stderr,
+                "  [STEP0 IRQ/EXCP] phase=%d intno=%02x is_int=%d "
+                "CS:EIP=%04x:%08x ESP=%08x SS=%04x\n",
+                m200_step0_phase, intno, is_int,
+                (uint16_t)env->segs[R_CS].selector, (uint32_t)env->eip,
+                (uint32_t)env->regs[R_ESP],
+                (uint16_t)env->segs[R_SS].selector);
+    }
+#endif
 
     if (!is_int) {
         cpu_svm_check_intercept_param(env, SVM_EXIT_EXCP_BASE + intno,

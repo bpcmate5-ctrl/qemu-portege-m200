@@ -43,7 +43,13 @@
 #undef IN
 #undef OUT
 
-void *pc_m200_get_tseg_ptr(void);
+void *pc_m200_get_high_smram_ptr(void);
+
+#if !defined(CONFIG_USER_ONLY)
+extern int m200_step0_need_esp_trace;
+extern int m200_step0_need_stack_trace;
+extern int m200_entry_watch;
+#endif
 
 #define PREFIX_REPZ   0x01
 #define PREFIX_REPNZ  0x02
@@ -3525,6 +3531,142 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
 #endif
     static int g_vbios_4f14_count = 0;
     static int g_post_ljmp_remaining = 0;
+    static int m200_minimal_checked;
+    static bool m200_minimal_telemetry;
+    static bool m200_f107_trace;
+    static bool m200_f108_timing;
+    static bool m200_f108_profile;
+
+    if (!m200_minimal_checked) {
+        m200_minimal_checked = 1;
+        m200_minimal_telemetry = getenv("M200_MINIMAL_TELEMETRY") != NULL;
+        m200_f107_trace = getenv("M200_F107_TRACE") != NULL;
+        m200_f108_timing = getenv("M200_F108_TIMING") != NULL;
+        m200_f108_profile = getenv("M200_F108_PROFILE") != NULL;
+    }
+
+#if !defined(CONFIG_USER_ONLY)
+    if (m200_f108_profile &&
+        (dc->cs_base == 0xfeda0000 || dc->cs_base == 0x000f0000 ||
+         dc->cs_base == 0xfff80000)) {
+        uint32_t ip16 = (uint32_t)dc->base.pc_next & 0xffff;
+
+        if (dc->base.num_insns == 1) {
+            ip16 |= 0x10000;
+        }
+        gen_helper_m200_f108_profile(tcg_env, tcg_constant_i32(ip16));
+    }
+    if ((m200_f107_trace || m200_f108_timing) &&
+        dc->cs_base == 0x000f0000) {
+        uint32_t ip16 = (uint32_t)dc->base.pc_next & 0xffff;
+
+        switch (ip16) {
+        case 0x172a: case 0x176d: case 0x17c4: case 0x180d:
+        case 0x1818: case 0xcac4: case 0xcaf7: case 0xcaf9:
+        case 0xcb02: case 0xcb0b: case 0xcb0f: case 0xcb19:
+        case 0xcb50: case 0xcb51: case 0xcb55: case 0xcb59:
+        case 0xcb68: case 0xcb6e: case 0xcbae: case 0xcbba:
+        case 0xcc23: case 0xcc24: case 0xcc2c: case 0xcc42:
+        case 0xccf0: case 0xcd1e: case 0xcd28: case 0xcd56:
+        case 0xe2c6: case 0xe2cc: case 0xe2d4: case 0xe2e0:
+        case 0xe321: case 0xe324: case 0xe33f:
+        case 0xe372: case 0xe382: case 0xe384: case 0xe389:
+        case 0xe38d: case 0xe3a4: case 0xe3bf: case 0xe3c5:
+        case 0xe3cf: case 0xe3d2: case 0xe409: case 0xe40e:
+        case 0xe413: case 0xe414:
+        case 0xe458: case 0xe45d: case 0xe463: case 0xe466:
+        case 0x19a0: case 0x19af: case 0x19b5: case 0x19c6:
+            if (m200_f108_timing) {
+                translator_io_start(&dc->base);
+            }
+            gen_helper_m200_step0_probe(tcg_env, tcg_constant_i32(ip16));
+            break;
+        default:
+            break;
+        }
+    }
+    if ((m200_f107_trace || m200_f108_timing) &&
+        dc->cs_base == 0xfeda0000) {
+        uint32_t ip16 = (uint32_t)dc->base.pc_next & 0xffff;
+
+        switch (ip16) {
+        case 0x4526: case 0x4534: case 0x454e: case 0xc489: case 0xc4b7:
+        case 0xc4bc: case 0xc4c2: case 0xc4ef: case 0xc4f7:
+        case 0xc4fa: case 0xc504:
+        case 0x8b1b: case 0x8b20: case 0x8b23:
+        case 0xc40d: case 0xc41a: case 0xc41d: case 0xc41f:
+        case 0xc42c: case 0xc42f: case 0xc431: case 0xc46d:
+        case 0xc46f: case 0xc474: case 0xc480:
+        case 0xef6b: case 0xef72:
+        case 0xd89c: case 0xd8b4: case 0xd8c2: case 0xd8e5:
+        case 0xd8d9: case 0xd8e0:
+        case 0xe3b3: case 0xe40e: case 0xe41f: case 0xe44d:
+        case 0xe459: case 0xe464: case 0xe46d: case 0xe479:
+        case 0xc147:
+        case 0x6e62: case 0x6e75: case 0x6e84: case 0x6e88:
+            if (m200_f108_timing) {
+                translator_io_start(&dc->base);
+            }
+            gen_helper_m200_step0_probe(tcg_env, tcg_constant_i32(ip16));
+            break;
+        default:
+            break;
+        }
+    }
+    if (m200_f107_trace && dc->cs_base == 0xfff80000) {
+        uint32_t ip16 = (uint32_t)dc->base.pc_next & 0xffff;
+
+        switch (ip16) {
+        case 0xcca4: case 0xcc3e: case 0xcc54:
+            if (m200_f108_timing) {
+                translator_io_start(&dc->base);
+            }
+            gen_helper_m200_step0_probe(tcg_env, tcg_constant_i32(ip16));
+            break;
+        default:
+            break;
+        }
+    }
+
+    if (!m200_minimal_telemetry) {
+        uint32_t ip16 = (uint32_t)dc->base.pc_next & 0xffff;
+        int probe = 0;
+
+        /* Always probe Step0 EDI/ESP landmarks (Module3 offsets). */
+        switch (ip16) {
+        case 0x6844: case 0x6848: case 0x684c: case 0x6852:
+        case 0x692a: case 0x692d: case 0x6920: case 0x6925:
+        case 0x68e4: case 0x68e9: case 0x6901: case 0x6909: case 0x690c:
+        case 0x6914: case 0x6917: case 0x691c:
+        case 0x6a6c: case 0x6a6f:
+        case 0x6a78: case 0x6a7a: case 0x6a7d:
+        case 0x6a8f: case 0x6a92:
+        case 0x6aab: case 0x6aad:
+        case 0x6c0a: case 0x6c0c: case 0x6c10:
+        case 0x0325: case 0x02f4: case 0x02e8: case 0x02ff:
+        case 0x1067: case 0x106c: case 0x1b91: case 0x1ba7:
+            probe = 1;
+            break;
+        default:
+            break;
+        }
+        /* Dense trace for early Step0 ROM window to find actual entry. */
+        if (dc->cs_base == 0xfffb0000 && ip16 >= 0x6840 && ip16 <= 0x6930) {
+            probe = 1;
+        }
+        if (m200_step0_need_esp_trace || m200_step0_need_stack_trace) {
+            probe = 1;
+        }
+        if (m200_entry_watch) {
+            probe = 1;
+        }
+        if (probe) {
+            gen_helper_m200_step0_probe(tcg_env, tcg_constant_i32(ip16));
+        }
+    }
+#endif
+
+    if (!m200_minimal_telemetry) {
     if (dc->base.pc_next == 0x000c0003) {
         fprintf(stderr, "\n============================================================\n"
                         "   [VBIOS EXECUTION] C000:0003 Option ROM Entry (Natural)\n"
@@ -3547,10 +3689,9 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
                         "   (Flat Panel Interface Validated by authentic VBIOS)\n"
                         "============================================================\n", g_vbios_4f14_count);
     } else if ((dc->base.pc_next & 0xFFFF) == 0x2f48 && dc->cs_base == 0x000f0000) {
-        uint8_t *tseg_ptr = (uint8_t *)pc_m200_get_tseg_ptr();
-        if (tseg_ptr) {
-            tseg_ptr[0xba140] |= 0x08; /* PM Unit Semaphore Available */
-            tseg_ptr[0xa140] |= 0x08;
+        uint8_t *high_ptr = pc_m200_get_high_smram_ptr();
+        if (high_ptr) {
+            high_ptr[0x1a140] |= 0x08;
         }
     } else if ((dc->base.pc_next & 0xFFFF) == 0x6e62) {
         fprintf(stderr, "\n>>> [POST MASTER STEP 29] Reached 0x%08x (0x6E62 PCI Discovery Entry) <<<\n", (uint32_t)dc->base.pc_next);
@@ -3643,39 +3784,251 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         fprintf(stderr, "\n============================================================\n"
                         "   [POST PCI ALLOC GATE] Reached 0x%08x (Module 6 0x2579 CMPW $1, [0x0151]!)\n"
                         "============================================================\n", (uint32_t)dc->base.pc_next);
-    } else if ((dc->base.pc_next & 0xFFFF) == 0x2586) {
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x7036) {
         fprintf(stderr, "\n============================================================\n"
-                        "   [POST PCI ALLOC ENTRY] Reached 0x%08x (Module 6 0x2586 Table Alloc!)\n"
+                        "   [POST MODULE 3 7036 PHASE 27] Reached 0x%08x (Phase 0x27!)\n"
                         "============================================================\n", (uint32_t)dc->base.pc_next);
-    } else if ((dc->base.pc_next & 0xFFFF) == 0x2de6) {
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x7056) {
         fprintf(stderr, "\n============================================================\n"
-                        "   [POST PCI TABLE SET] Reached 0x%08x (Module 6 0x2DE6 [014B]=8 [014D]=0x200!)\n"
+                        "   [POST MODULE 3 7056 CALL A9DE] Reached 0x%08x (Calls 0xA9DE!)\n"
                         "============================================================\n", (uint32_t)dc->base.pc_next);
-    } else if ((dc->base.pc_next & 0xFFFF) == 0x38ff) {
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x7059) {
         fprintf(stderr, "\n============================================================\n"
-                        "   [POST FS:A2 WRITER] Reached 0x%08x (Module 6 0x38FF MOV %%CX, FS:0x00A2!)\n"
+                        "   [POST MODULE 3 7059 PHASE 28] Reached 0x%08x (Phase 0x28!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xa9de) {
+        fprintf(stderr, ">>> [POST MODULE 3 A9DE CALL 5EAB] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xa9ea) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST MODULE 3 A9EA 5-SLOT LOOP ENTRY] Reached 0x%08x (5-Slot Loop!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xa9ed) {
+        fprintf(stderr, ">>> [POST MODULE 3 A9ED MOV $5, %%CX] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xaa23) {
+        fprintf(stderr, ">>> [POST MODULE 3 AA23 CMP $0x90, %%SI] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xaa29) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST MODULE 3 AA29 CALL AA3E] Reached 0x%08x (Calls 0xAA3E!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xaa3e) {
+        fprintf(stderr, ">>> [POST MODULE 3 AA3E CALL AA9D] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xaa9d) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST MODULE 3 AA9D ENTRY] Reached 0x%08x (Module 3 0xAA9D!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xaaa6) {
+        fprintf(stderr, ">>> [POST MODULE 3 AAA6 WRITE F00B4/B5] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xac30) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST MODULE 3 AC30 CALL D76C] Reached 0x%08x (Calls 0xD76C!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xd76c) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST MODULE 3 D76C PROFILE SYNTH] Reached 0x%08x (Module 3 0xD76C!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xd776) {
+        fprintf(stderr, ">>> [POST MODULE 3 D776 MOV $0x581, %%SI] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xd779) {
+        fprintf(stderr, ">>> [POST MODULE 3 D779 CALL D3CE] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xd3ce) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST MODULE 3 D3CE ENTRY] Reached 0x%08x (Module 3 0xD3CE!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x5a24) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST MODULE 1 5A24 LJMP D371] Reached 0x%08x (Calls 0xD371!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xb22d) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST MODULE 3 B22D DYNAMIC BIT SETTER] Reached 0x%08x (Module 3 0xB22D!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xd384) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST MODULE 3 D384 ORW $2, [0x9FAF]] Reached 0x%08x (Module 3 0xD384!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xb305) {
+        fprintf(stderr, ">>> [B305 CMP $0x90, %%SI] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xb309) {
+        fprintf(stderr, ">>> [B309 JNE 0xB313] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xb30b) {
+        fprintf(stderr, ">>> [B30B MOV $0x03F601F0, %%EDX] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xb313) {
+        fprintf(stderr, ">>> [B313 CMP $0xBD, %%SI] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xb317) {
+        fprintf(stderr, ">>> [B317 JNE 0xB321] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xb319) {
+        fprintf(stderr, ">>> [B319 MOV $0x03760170, %%EDX] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xb321) {
+        fprintf(stderr, ">>> [B321 CALL 0xD486] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x0b10) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST VIDEO COORDINATOR 0B10] Reached 0x%08x (Module 2 0x0B10!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x0b1a) {
+        fprintf(stderr, ">>> [POST 0B1A CMP $0x90, %%SI] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x0b25) {
+        fprintf(stderr, ">>> [POST 0B25 CMPW $0, %%FS:0xA2] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x77e7) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST SHADOW COPIER ENTRY] Reached 0x%08x (Module 3 0x77E7 REP MOVSL!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x7814) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST SHADOW TABLE RELOC] Reached 0x%08x (Module 3 0x7814 Call E6A8!)\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x7826) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   [POST SHADOW TABLE COPIER] Reached 0x%08x (Module 3 0x7826 REP MOVSL!)\n"
                         "============================================================\n", (uint32_t)dc->base.pc_next);
     } else if ((dc->base.pc_next & 0xFFFF) == 0x668c) {
-        fprintf(stderr, "\n============================================================\n"
-                        "   [POST VIDEO GATE 668C] Reached 0x%08x (Module 2 0x668C CMPW $0, %%FS:0x00A2!)\n"
-                        "============================================================\n", (uint32_t)dc->base.pc_next);
+        static int seq = 0;
+        uint16_t f00a2 = 0, f00a4 = 0, f00cf = 0;
+        cpu_physical_memory_read(0xf00a2, &f00a2, 2);
+        cpu_physical_memory_read(0xf00a4, &f00a4, 2);
+        cpu_physical_memory_read(0xf00cf, &f00cf, 2);
+        fprintf(stderr, "\n>>> [POST ACCEPTANCE #%03d: 668C] Reached 0x%08x (Module 2 0x668C) F00A2=0x%04x F00A4=0x%04x F00CF=0x%04x <<<\n",
+                ++seq, (uint32_t)dc->base.pc_next, f00a2, f00a4, f00cf);
     } else if ((dc->base.pc_next & 0xFFFF) == 0x66b6) {
-        fprintf(stderr, "\n============================================================\n"
-                        "   [POST VIDEO LJMP 66B6] Reached 0x%08x (Module 2 0x66B6 LJMP $0x30, $0xD807!)\n"
-                        "============================================================\n", (uint32_t)dc->base.pc_next);
+        static int seq = 0;
+        fprintf(stderr, "\n>>> [POST ACCEPTANCE #%03d: 66B6] Reached 0x%08x (Module 2 0x66B6 LJMP $0x30, $0xD807) <<<\n",
+                ++seq, (uint32_t)dc->base.pc_next);
     } else if ((dc->base.pc_next & 0xFFFF) == 0xd807) {
+        static int seq = 0;
+        fprintf(stderr, "\n>>> [POST ACCEPTANCE #%03d: D807] Reached 0x%08x (Module 3 0xD807 Option ROM Scanner Entry) <<<\n",
+                ++seq, (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xd8b4) {
+        static int seq = 0;
+        fprintf(stderr, ">>> [POST ACCEPTANCE #%03d: D8B4] pc=0x%08x <<<\n", ++seq, (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xd9c0) {
+        static int seq = 0;
+        fprintf(stderr, ">>> [POST ACCEPTANCE #%03d: D9C0] pc=0x%08x <<<\n", ++seq, (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xdb8e) {
+        static int seq = 0;
+        fprintf(stderr, ">>> [POST ACCEPTANCE #%03d: DB8E] pc=0x%08x <<<\n", ++seq, (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xdb97) {
+        static int seq = 0;
+        fprintf(stderr, ">>> [POST ACCEPTANCE #%03d: DB97] pc=0x%08x <<<\n", ++seq, (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xdb9f) {
+        static int seq = 0;
+        fprintf(stderr, ">>> [POST ACCEPTANCE #%03d: DB9F] pc=0x%08x <<<\n", ++seq, (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xdba6) {
+        static int seq = 0;
+        fprintf(stderr, ">>> [POST ACCEPTANCE #%03d: DBA6] pc=0x%08x <<<\n", ++seq, (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc64b) {
         fprintf(stderr, "\n============================================================\n"
-                        "   [POST VIDEO INIT D807] Reached 0x%08x (Module 3 0xD807 Video Init Entry!)\n"
+                        "   >>> [STEP 13 C64B ENTRY] Reached 0x%08x (Step 0x13 Entry!) <<<\n"
                         "============================================================\n", (uint32_t)dc->base.pc_next);
-    } else if (dc->cs_base == 0x000c0000 && (dc->base.pc_next & 0xFFFF) == 0xc7b2) {
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc657) {
+        fprintf(stderr, ">>> [STEP 13 C657] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc663) {
+        fprintf(stderr, ">>> [STEP 13 C663] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc66f) {
+        fprintf(stderr, ">>> [STEP 13 C66F] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc676) {
+        fprintf(stderr, ">>> [STEP 13 C676] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc685) {
+        fprintf(stderr, ">>> [STEP 13 C685] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc691) {
+        fprintf(stderr, ">>> [STEP 13 C691] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc69d) {
+        fprintf(stderr, ">>> [STEP 13 C69D] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc6a2) {
+        fprintf(stderr, ">>> [STEP 13 C6A2] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc6ab) {
+        fprintf(stderr, ">>> [STEP 13 C6AB] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc6b2) {
+        fprintf(stderr, ">>> [STEP 13 C6B2] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc6bb) {
+        fprintf(stderr, ">>> [STEP 13 C6BB] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc6cb) {
+        fprintf(stderr, ">>> [STEP 13 C6CB] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc6d0) {
+        fprintf(stderr, ">>> [STEP 13 C6D0] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc6d2) {
+        fprintf(stderr, ">>> [STEP 13 C6D2 ENTRY] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc6de) {
+        fprintf(stderr, ">>> [STEP 13 C6DE CHECKSUM LOOP] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc6ec) {
+        fprintf(stderr, ">>> [STEP 13 C6EC UPDATE CHECKSUM] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc6f3) {
+        fprintf(stderr, ">>> [STEP 13 C6F3 MOV $0xFF00, [0x32]] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc6f9) {
+        fprintf(stderr, ">>> [STEP 13 C6F9 CALL 5CA2] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc70c) {
+        fprintf(stderr, ">>> [STEP 13 C70C LJMP F046] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc711) {
+        fprintf(stderr, ">>> [STEP 13 C711 RESUME] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc722) {
+        fprintf(stderr, ">>> [STEP 13 C722 LJMP 7B5B] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc72e) {
+        fprintf(stderr, ">>> [STEP 13 C72E LJMP 6FA8] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc73a) {
+        fprintf(stderr, ">>> [STEP 13 C73A LJMP 89E2] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc74d) {
+        fprintf(stderr, ">>> [STEP 13 C74D LJMP 8019] pc=0x%08x <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xc752) {
         fprintf(stderr, "\n============================================================\n"
-                        "   >>> [VBIOS C7B2 HIT] Reached C000:C7B2 (C0214 Parameter Block Init!) <<<\n"
+                        "   >>> [STEP 13 C752 EXIT] Reached 0x%08x (MOV $0x2300, %%BX; LRET!) <<<\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x08aa) {
+        static int seq = 0;
+        fprintf(stderr, "\n>>> [POST ACCEPTANCE #%03d: 08AA] Reached 0x%08x (0x08AA TESTB $1, 0x10(%%BP)) <<<\n",
+                ++seq, (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x08ae) {
+        static int seq = 0;
+        fprintf(stderr, ">>> [POST ACCEPTANCE #%03d: 08AE] Reached 0x%08x (0x08AE JE 0x08B2) <<<\n", ++seq, (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x08b2) {
+        static int seq = 0;
+        fprintf(stderr, "\n>>> [POST ACCEPTANCE #%03d: 08B2] Reached 0x%08x (0x08B2 SUCCESS ENTRY!) <<<\n",
+                ++seq, (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x08c3) {
+        static int seq = 0;
+        fprintf(stderr, ">>> [POST ACCEPTANCE #%03d: 08C3] Reached 0x%08x (0x08C3 JMP 0x031E) <<<\n", ++seq, (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xdb33) {
+        static int seq = 0;
+        fprintf(stderr, ">>> [POST ACCEPTANCE #%03d: DB33] pc=0x%08x <<<\n", ++seq, (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xeb81) {
+        static int seq = 0;
+        fprintf(stderr, "\n>>> [POST ACCEPTANCE #%03d: EB81] Reached 0x%08x (Protected->Real Mode Thunk Entry) <<<\n",
+                ++seq, (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0xebc0) {
+        static int seq = 0;
+        fprintf(stderr, "\n>>> [POST ACCEPTANCE #%03d: EBC0] Reached 0x%08x (Thunk LRET to VBIOS!) <<<\n",
+                ++seq, (uint32_t)dc->base.pc_next);
+    } else if (dc->cs_base == 0x000c0000 && (dc->base.pc_next & 0xFFFF) == 0x0003) {
+        static int seq = 0;
+        fprintf(stderr, "\n============================================================\n"
+                        "   >>> [POST ACCEPTANCE #%03d: EXACT PHYSICAL 0x000C0003 FETCH] <<<\n"
+                        "   pc=0x%08x cs_base=0x%08x IP=0x0003 (NVIDIA Option ROM Entry!)\n"
+                        "============================================================\n",
+                ++seq, (uint32_t)dc->base.pc_next, (uint32_t)dc->cs_base);
+    } else if (dc->cs_base == 0x000c0000 && (dc->base.pc_next & 0xFFFF) == 0xc7b2) {
+        static int seq = 0;
+        fprintf(stderr, "\n>>> [POST ACCEPTANCE #%03d: C7B2] Reached C000:C7B2 <<<\n", ++seq);
+    }
+
+    if (dc->cs_base == 0x000c0000) {
+        static int vbios_insn_count = 0;
+        if (vbios_insn_count < 200) {
+            fprintf(stderr, "    [VBIOS INSN #%03d] pc=0x%08x (off=0x%04x)\n",
+                    vbios_insn_count++, (uint32_t)dc->base.pc_next, (uint32_t)(dc->base.pc_next & 0xFFFF));
+        }
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x02e8) {
+        fprintf(stderr, ">>> [DISPATCHER ITERATION] at 0x%08x (0x02E8) <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x0328) {
+        fprintf(stderr, ">>> [DISPATCHER STEP END] at 0x%08x (0x0328 CMP $0x23, %%BH) <<<\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x032d) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   >>> [DISPATCHER MASTER LOOP EXIT] Reached 0x%08x (0x032D Exit!) <<<\n"
+                        "============================================================\n", (uint32_t)dc->base.pc_next);
+    } else if ((dc->base.pc_next & 0xFFFF) == 0x1d7e) {
+        fprintf(stderr, "\n============================================================\n"
+                        "   >>> [MODULE 0 0x1D7E HIT] IVT 0x68 Restorer / Installer! <<<\n"
                         "============================================================\n");
     } else if ((dc->base.pc_next & 0xFFFF) == 0x6b7f) {
-        uint8_t *tseg_ptr = (uint8_t *)pc_m200_get_tseg_ptr();
-        if (tseg_ptr) {
-            tseg_ptr[0xb0000] = 0x80; /* NOR Flash Ready Status (Bit 7 = 1) */
-            tseg_ptr[0x00000] = 0x80;
+        uint8_t *high_ptr = pc_m200_get_high_smram_ptr();
+        if (high_ptr) {
+            high_ptr[0x10000] = 0x80;
         }
     } else if ((dc->base.pc_next & 0xFFFF) == 0x02f4) {
         g_post_ljmp_remaining = 200;
@@ -3684,6 +4037,7 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         g_post_ljmp_remaining--;
         fprintf(stderr, "    [POST STEP TRACE] pc=0x%08x (off=0x%04x) cs_base=0x%08x\n",
                 (uint32_t)dc->base.pc_next, (uint32_t)(dc->base.pc_next & 0xFFFF), (uint32_t)dc->cs_base);
+    }
     }
 
     switch (sigsetjmp(dc->jmpbuf, 0)) {
