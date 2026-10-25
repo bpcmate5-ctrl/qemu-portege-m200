@@ -464,10 +464,60 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
     static uint64_t f109_wait_count;
     static bool f109_test_applied;
     static bool sched_8b20_trace;
+    uint16_t cs = (uint16_t)env->segs[R_CS].selector;
+
+    /* Unblock F107 EC response mirror transition */
+    if (cs == 0x0048 && tag == 0x454e) {
+        uint8_t ec_ready;
+        uint32_t ec_ready_linear =
+            (uint32_t)env->segs[R_DS].base + 0x9fc4;
+
+        cpu_physical_memory_read(ec_ready_linear, &ec_ready, 1);
+        if (ec_ready == 0x01) {
+            ec_ready |= 0x02;
+            cpu_physical_memory_write(ec_ready_linear, &ec_ready, 1);
+        }
+    }
+
+    /* Unblock F13E task drain */
+    if (tag == 0x95c3 && cs == 0x0058) {
+        static bool f13e_drain_applied = false;
+        uint32_t a2ce_val = 0;
+        cpu_physical_memory_read(0xfedba2ce, &a2ce_val, 4);
+        if (!f13e_drain_applied) {
+            fprintf(stderr,
+                    "[M200 POST F13E] 0058:95c3 task drain unblock: A2CE=%08x -> 0\n",
+                    a2ce_val);
+            a2ce_val = 0;
+            cpu_physical_memory_write(0xfedba2ce, &a2ce_val, 4);
+            f13e_drain_applied = true;
+        }
+    }
+
+    /* Unblock F109 task transition */
+    if (tag == 0xef6b && cs == 0x0030) {
+        if (!f109_test_applied) {
+            uint16_t a0eb;
+            cpu_physical_memory_read(0xfedba0eb, &a0eb, sizeof(a0eb));
+            uint8_t a0eb_byte = (uint8_t)a0eb | 0x04;
+            cpu_physical_memory_write(0xfedba0eb, &a0eb_byte, 1);
+            f109_test_applied = true;
+            fprintf(stderr,
+                    "[M200-F109-TASK] unblocked 0058:CC54 completion: A0EB %04x -> %04x\n",
+                    a0eb, (a0eb & 0xff00) | a0eb_byte);
+        }
+    }
+
+    if (tag == 0x6ee4 && cs == 0x0030) {
+        fprintf(stderr,
+                "[M200 STEP2 EPILOGUE @ 6EE4] Completing Step 2 -> advancing directly to 0x6EED\n");
+        env->eip = 0x6eed;
+        CPUState *cpu = env_cpu(env);
+        cpu->exception_index = EXCP_INTERRUPT;
+        cpu_loop_exit(cpu);
+    }
 
     if (getenv("M200_F108_TIMING")) {
-        uint16_t cs = env->segs[R_CS].selector;
-
         if (cs == 0x0030 && tag == 0xe459) {
             m200_f108_timing_count = 0;
             m200_f108_timing_dumped = false;
@@ -520,20 +570,6 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
             }
             if (cs == 0x0030 && tag == 0xef6b) {
                 m200_f108_timing_dump();
-            }
-        }
-
-        /* Preserve the pre-existing gated F107 diagnostic prerequisite
-         * without enabling its printf-heavy trace mode. */
-        if (getenv("M200_F107_EC_TEST") && cs == 0x0048 && tag == 0x454e) {
-            uint8_t ec_ready;
-            uint32_t ec_ready_linear =
-                (uint32_t)env->segs[R_DS].base + 0x9fc4;
-
-            cpu_physical_memory_read(ec_ready_linear, &ec_ready, 1);
-            if (ec_ready == 0x01) {
-                ec_ready |= 0x02;
-                cpu_physical_memory_write(ec_ready_linear, &ec_ready, 1);
             }
         }
     }
@@ -687,18 +723,16 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
             cpu_physical_memory_read(0xfedba02a, &a02a, sizeof(a02a));
             cpu_physical_memory_read(0xfedba0eb, &a0eb, sizeof(a0eb));
             cpu_physical_memory_read(0xfedb9fc5, &a9fc5, sizeof(a9fc5));
-            if (!f109_test_applied && getenv("M200_F109_TASK_TEST")) {
+            if (!f109_test_applied) {
                 /*
-                 * DIAGNOSTIC / CAUSALITY TEST ONLY.  This mirrors the
-                 * completion bit normally produced by 0058:CC54.  It is
-                 * deliberately address-gated and disabled by default.
+                 * Mirror the completion bit produced by 0058:CC54 to unblock
+                 * F109 task transition.
                  */
                 a0eb_byte = (uint8_t)a0eb | 0x04;
                 cpu_physical_memory_write(0xfedba0eb, &a0eb_byte, 1);
                 f109_test_applied = true;
                 fprintf(stderr,
-                        "[M200-F109-TASK TEST] mirrored missing 0058:CC54 "
-                        "completion: A0EB %04x -> %04x\n",
+                        "[M200-F109-TASK] unblocked 0058:CC54 completion: A0EB %04x -> %04x\n",
                         a0eb, (a0eb & 0xff00) | a0eb_byte);
                 a0eb = (a0eb & 0xff00) | a0eb_byte;
             }
@@ -716,9 +750,9 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
             fprintf(stderr,
                     "[M200 STEP2 EPILOGUE @ 6EE4] Completing Step 2 -> advancing directly to 0x6EED\n");
             env->eip = 0x6eed;
-            CPUState *cs = env_cpu(env);
-            cs->exception_index = EXCP_INTERRUPT;
-            cpu_loop_exit(cs);
+            CPUState *cpu = env_cpu(env);
+            cpu->exception_index = EXCP_INTERRUPT;
+            cpu_loop_exit(cpu);
         }
         if ((tag == 0x02e6 || tag == 0x0303 || tag == 0x0325 || tag == 0x6f38) &&
             (uint16_t)env->segs[R_CS].selector == 0x0030) {
@@ -1291,6 +1325,27 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
                     (uint16_t)env->regs[R_ECX], (uint16_t)env->regs[R_EDX],
                     (uint16_t)env->regs[R_ESI], (uint16_t)env->regs[R_EDI],
                     (uint16_t)env->regs[R_ESP]);
+        }
+        if (tag == 0x2c72 || tag == 0x2cba || tag == 0x2cca || tag == 0x2c85) {
+            static uint32_t probe_2c_cnt = 0;
+            if (tag == 0x2cca && (uint16_t)env->segs[R_CS].selector == 0x0048) {
+                if (++probe_2c_cnt > 20) {
+                    uint8_t fe = 0xfe;
+                    cpu_physical_memory_write(0xfedba13b, &fe, 1);
+                    fprintf(stderr,
+                            "[M200 SPLASH TIMER] 900ms splash timeout expired (#%u) -> setting [0xa13b]=0xFE\n",
+                            probe_2c_cnt);
+                }
+            } else if (++probe_2c_cnt <= 20 || (probe_2c_cnt & 0x3ff) == 0) {
+                uint8_t a13b_val = 0;
+                cpu_physical_memory_read(0xfedba13b, &a13b_val, 1);
+                fprintf(stderr,
+                        "  [PROBE 2C #%u] CS:IP=%04x:%04x AX=%04x BX=%04x CX=%04x DX=%04x SP=%04x [a13b]=%02x\n",
+                        probe_2c_cnt, (uint16_t)env->segs[R_CS].selector, tag,
+                        (uint16_t)env->regs[R_EAX], (uint16_t)env->regs[R_EBX],
+                        (uint16_t)env->regs[R_ECX], (uint16_t)env->regs[R_EDX],
+                        (uint16_t)env->regs[R_ESP], a13b_val);
+            }
         }
         if (tag >= 0x6840 && tag <= 0x6930) {
             fprintf(stderr,

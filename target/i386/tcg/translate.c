@@ -3540,7 +3540,7 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
     if (!m200_minimal_checked) {
         m200_minimal_checked = 1;
         m200_minimal_telemetry = getenv("M200_MINIMAL_TELEMETRY") != NULL;
-        m200_f107_trace = getenv("M200_F107_TRACE") != NULL;
+        m200_f107_trace = true;
         m200_f108_timing = getenv("M200_F108_TIMING") != NULL;
         m200_f108_profile = getenv("M200_F108_PROFILE") != NULL;
     }
@@ -3585,6 +3585,7 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
             break;
         default:
             if (PE(dc) && ((ip16 >= 0x3420 && ip16 <= 0x3470) || ip16 == 0x0041 ||
+                           ip16 == 0x2c72 || ip16 == 0x2cba || ip16 == 0x2cca || ip16 == 0x2c85 ||
                            (ip16 >= 0x62e0 && ip16 <= 0x6300) || (ip16 >= 0xe470 && ip16 <= 0xe4a0))) {
                 gen_helper_m200_step0_probe(tcg_env, tcg_constant_i32(ip16));
             }

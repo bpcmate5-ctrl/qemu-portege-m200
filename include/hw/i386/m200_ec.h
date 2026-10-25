@@ -20,6 +20,8 @@ OBJECT_DECLARE_SIMPLE_TYPE(M200ECMailbox, M200_EC_MAILBOX)
 typedef struct M200ECBackendOps {
     /* Called after the host has filled DBBIN and asserted IBF. */
     void (*input_available)(void *opaque, M200ECMailbox *mailbox);
+    /* Called after the host has read DBBOUT and cleared OBF. */
+    void (*output_consumed)(void *opaque, M200ECMailbox *mailbox);
 } M200ECBackendOps;
 
 M200ECMailbox *m200_ec_mailbox_new(Object *owner, MemoryRegion *system_io,

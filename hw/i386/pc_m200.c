@@ -221,7 +221,27 @@ typedef struct ToshibaM200ECBackend {
     uint8_t reg_index;
     int state;
     uint8_t ec_regs[256];
+    uint8_t resp_buf[64];
+    uint8_t resp_len;
+    uint8_t resp_pos;
 } ToshibaM200ECBackend;
+
+static void m200_ec_backend_output_consumed(void *opaque, M200ECMailbox *mailbox)
+{
+    ToshibaM200ECBackend *s = opaque;
+
+    if (s->resp_pos < s->resp_len) {
+        uint8_t b = s->resp_buf[s->resp_pos++];
+        m200_ec_mailbox_output_byte(mailbox, b);
+        m200_ec_mailbox_set_user_status(mailbox, 0x70);
+        uint8_t flag = 0;
+        cpu_physical_memory_read(0xfedb9fc4, &flag, 1);
+        flag |= 0x02;
+        cpu_physical_memory_write(0xfedb9fc4, &flag, 1);
+        fprintf(stderr, "[M200 EC BACKEND] Streamed response byte [%u/%u] = 0x%02x\n",
+                s->resp_pos, s->resp_len, b);
+    }
+}
 
 static void m200_ec_backend_input(void *opaque, M200ECMailbox *mailbox)
 {
@@ -253,7 +273,17 @@ static void m200_ec_backend_input(void *opaque, M200ECMailbox *mailbox)
             s->state = 0;
         } else if (val == 0x9F) {
             fprintf(stderr, "[M200 EC BACKEND] CMD 9F (Read Drive Detection Result)\n");
-            m200_ec_mailbox_output_byte(mailbox, 0x00);
+            static const uint8_t resp_9f[10] = {
+                0x09, /* length of payload (matches expected read count [0x39ad] = 9) */
+                0x01, /* payload[0]: drive detected / success status */
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 /* payload[1..8]: status payload */
+            };
+            memcpy(s->resp_buf, resp_9f, sizeof(resp_9f));
+            s->resp_len = sizeof(resp_9f);
+            s->resp_pos = 0;
+
+            uint8_t b0 = s->resp_buf[s->resp_pos++];
+            m200_ec_mailbox_output_byte(mailbox, b0);
             m200_ec_mailbox_set_user_status(mailbox, 0x70);
             uint8_t flag = 0;
             cpu_physical_memory_read(0xfedb9fc4, &flag, 1);
@@ -300,6 +330,7 @@ static void m200_ec_backend_input(void *opaque, M200ECMailbox *mailbox)
 
 static const M200ECBackendOps m200_ec_backend_ops = {
     .input_available = m200_ec_backend_input,
+    .output_consumed = m200_ec_backend_output_consumed,
 };
 
 /* Toshiba Portege M200 Hardware Debug Port (PJ2000 - MS Debug Port Spec v1.0 on 0x1E0..0x1E7) */

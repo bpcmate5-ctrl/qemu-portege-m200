@@ -142,7 +142,11 @@ static void m200_ec_host_write(M200ECMailbox *s, uint8_t value,
     s->status |= M200_EC_STS_IBF;
     m200_ec_trace(s, is_command ? "HOST CMD DBBIN <-" :
                                      "HOST DATA DBBIN <-", value);
-    qemu_bh_schedule(s->backend_bh);
+    if (s->backend_ops && s->backend_ops->input_available) {
+        s->backend_ops->input_available(s->backend_opaque, s);
+    } else {
+        qemu_bh_schedule(s->backend_bh);
+    }
 }
 
 static uint64_t m200_ec_data_read(void *opaque, hwaddr addr, unsigned size)
@@ -153,6 +157,9 @@ static uint64_t m200_ec_data_read(void *opaque, hwaddr addr, unsigned size)
     if (s->status & M200_EC_STS_OBF) {
         s->status &= ~M200_EC_STS_OBF;
         m200_ec_trace(s, "HOST read DBBOUT", value);
+        if (s->backend_ops && s->backend_ops->output_consumed) {
+            s->backend_ops->output_consumed(s->backend_opaque, s);
+        }
         return value;
     }
 
