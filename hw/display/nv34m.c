@@ -1099,6 +1099,80 @@ void nv34m_log_vga_mem_write(hwaddr addr, unsigned size)
     }
 }
 
+void nv34m_dump_screen_ppm(const char *filename)
+{
+    if (!global_nv34m_state || !global_nv34m_state->vga.vram_ptr) {
+        return;
+    }
+    VGACommonState *vga = &global_nv34m_state->vga;
+    FILE *fp = fopen(filename, "wb");
+    if (!fp) {
+        return;
+    }
+
+    static const uint8_t default_ega_palette[16][3] = {
+        {  0,   0,   0}, {  0,   0, 170}, {  0, 170,   0}, {  0, 170, 170},
+        {170,   0,   0}, {170,   0, 170}, {170,  85,   0}, {170, 170, 170},
+        { 85,  85,  85}, { 85,  85, 255}, { 85, 255,  85}, { 85, 255, 255},
+        {255,  85,  85}, {255,  85, 255}, {255, 255,  85}, {255, 255, 255}
+    };
+
+    bool is_graphic = (vga->gr[VGA_GFX_MISC] & 1);
+    int width = 640;
+    int height = 480;
+    int line_offset = vga->cr[VGA_CRTC_OFFSET] << 3;
+    uint32_t start_addr = (vga->cr[VGA_CRTC_START_LO] | (vga->cr[VGA_CRTC_START_HI] << 8)) * 4;
+
+    if (vga->get_resolution) {
+        vga->get_resolution(vga, &width, &height);
+    }
+    if (line_offset == 0) {
+        line_offset = (width / 8) * 4;
+    } else if (line_offset == 800) {
+        /* Toshiba SXGA+/UXGA 1600-pixel scanline layout */
+        width = 1600;
+        height = 320;
+    }
+
+    fprintf(stderr, "[NV34M DUMP SCREEN] file=%s graphic=%d res=%dx%d pitch=%d start_addr=%05x\n",
+            filename, is_graphic, width, height, line_offset, start_addr);
+
+    fprintf(fp, "P6\n%d %d\n255\n", width, height);
+
+    for (int y = 0; y < height; y++) {
+        uint32_t row_off = start_addr + y * line_offset;
+        for (int x = 0; x < width; x++) {
+            uint32_t byte_off = row_off + (x / 8) * 4;
+            int bit = 7 - (x % 8);
+            uint8_t c0 = (vga->vram_ptr[byte_off + 0] >> bit) & 1;
+            uint8_t c1 = (vga->vram_ptr[byte_off + 1] >> bit) & 1;
+            uint8_t c2 = (vga->vram_ptr[byte_off + 2] >> bit) & 1;
+            uint8_t c3 = (vga->vram_ptr[byte_off + 3] >> bit) & 1;
+            uint8_t color_idx = c0 | (c1 << 1) | (c2 << 2) | (c3 << 3);
+
+            uint8_t dac_idx = vga->ar[color_idx & 0x0f] & 0x3f;
+            uint8_t r = ((vga->palette[dac_idx * 3 + 0] & 0x3f) * 255) / 63;
+            uint8_t g = ((vga->palette[dac_idx * 3 + 1] & 0x3f) * 255) / 63;
+            uint8_t b = ((vga->palette[dac_idx * 3 + 2] & 0x3f) * 255) / 63;
+            if (r == 0 && g == 0 && b == 0 && color_idx != 0) {
+                r = default_ega_palette[color_idx & 0x0f][0];
+                g = default_ega_palette[color_idx & 0x0f][1];
+                b = default_ega_palette[color_idx & 0x0f][2];
+            }
+            fputc(r, fp);
+            fputc(g, fp);
+            fputc(b, fp);
+        }
+    }
+    fclose(fp);
+
+    FILE *fraw = fopen("scratch/vram_256k.bin", "wb");
+    if (fraw) {
+        fwrite(vga->vram_ptr, 1, 256 * 1024, fraw);
+        fclose(fraw);
+    }
+}
+
 void nv34m_log_vga_ioport_read(uint32_t addr, uint32_t val)
 {
     if (addr == 0x3da || addr == 0x3ba) {

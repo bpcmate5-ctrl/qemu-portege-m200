@@ -99,11 +99,70 @@ static int m200_heartbeat_sec = 0;
 static void m200_heartbeat_cb(void *opaque)
 {
     m200_heartbeat_sec++;
-    fprintf(stderr, "[M200 HEARTBEAT #%d] CS:EIP=%04x:%08x base=%08x\n",
+    CPUState *cpu = current_cpu ? current_cpu : first_cpu;
+    CPUX86State *env = cpu ? &X86_CPU(cpu)->env : NULL;
+
+    uint32_t a2ce = 0, a2d2 = 0, a2de = 0, a2da = 0, a2d6 = 0;
+    uint8_t a2e7 = 0, a13e = 0, a140 = 0;
+    uint16_t a2e3 = 0, a2e5 = 0, a02a = 0, a2fc = 0;
+    cpu_physical_memory_read(0xfedba2ce, &a2ce, 4);
+    cpu_physical_memory_read(0xfedba2d2, &a2d2, 4);
+    cpu_physical_memory_read(0xfedba2de, &a2de, 4);
+    cpu_physical_memory_read(0xfedba2da, &a2da, 4);
+    cpu_physical_memory_read(0xfedba2d6, &a2d6, 4);
+    cpu_physical_memory_read(0xfedba2e7, &a2e7, 1);
+    cpu_physical_memory_read(0xfedba13e, &a13e, 1);
+    cpu_physical_memory_read(0xfedba140, &a140, 1);
+    cpu_physical_memory_read(0xfedba2e3, &a2e3, 2);
+    cpu_physical_memory_read(0xfedba2e5, &a2e5, 2);
+    cpu_physical_memory_read(0xfedba02a, &a02a, 2);
+    cpu_physical_memory_read(0xfedba2fc, &a2fc, 2);
+
+    fprintf(stderr, "[M200 HEARTBEAT #%d] CS:EIP=%04x:%08x (base=%08x) SS:ESP=%04x:%08x\n",
             m200_heartbeat_sec,
-            pc_m200_get_cpu_cs(),
-            pc_m200_get_cpu_eip(),
-            pc_m200_get_cpu_cs_base());
+            env ? env->segs[R_CS].selector : 0,
+            env ? (uint32_t)env->eip : 0,
+            env ? (uint32_t)env->segs[R_CS].base : 0,
+            env ? env->segs[R_SS].selector : 0,
+            env ? (uint32_t)env->regs[R_ESP] : 0);
+    if (env) {
+        fprintf(stderr, "   EAX=%08x EBX=%08x ECX=%08x EDX=%08x ESI=%08x EDI=%08x EBP=%08x FLAGS=%08x\n",
+                (uint32_t)env->regs[R_EAX], (uint32_t)env->regs[R_EBX],
+                (uint32_t)env->regs[R_ECX], (uint32_t)env->regs[R_EDX],
+                (uint32_t)env->regs[R_ESI], (uint32_t)env->regs[R_EDI],
+                (uint32_t)env->regs[R_EBP], (uint32_t)env->eflags);
+        uint32_t stk[8] = {0};
+        uint32_t sp = (uint32_t)env->regs[R_ESP];
+        uint32_t phys_stk = (uint32_t)(env->segs[R_SS].base + sp);
+        if (phys_stk > 0x20000000 && (phys_stk & 0xffff0000) != 0xfedb0000) {
+            phys_stk = 0xfedb0000 | (sp & 0xffff);
+        }
+        cpu_physical_memory_read(phys_stk, stk, sizeof(stk));
+        fprintf(stderr, "   Stack at %08x: %08x %08x %08x %08x %08x %08x %08x %08x\n",
+                phys_stk,
+                stk[0], stk[1], stk[2], stk[3], stk[4], stk[5], stk[6], stk[7]);
+    }
+    fprintf(stderr, "   Scheduler: a2ce(alloc)=%08x a2d2(run)=%08x a2de(excl)=%08x a2da(wait)=%08x a2d6=%08x\n",
+            a2ce, a2d2, a2de, a2da, a2d6);
+    fprintf(stderr, "   Current Task: a2e7=%02x a13e(owner)=%02x a140=%02x a2e3(sem)=%04x a2e5(sp)=%04x a02a=%04x a2fc=%04x\n",
+            a2e7, a13e, a140, a2e3, a2e5, a02a, a2fc);
+    for (int t = 0; t < 16; t++) {
+        if ((a2ce & (1u << t)) || (a2d2 & (1u << t))) {
+            uint16_t tsp = 0;
+            cpu_physical_memory_read(0xfedba24e + t * 2, &tsp, 2);
+            uint16_t tstk[16] = {0};
+            if (tsp >= 0x1000 && tsp <= 0xfff0) {
+                cpu_physical_memory_read(0xfedb0000 + tsp, tstk, sizeof(tstk));
+            }
+            fprintf(stderr, "   Task %2d: SP=%04x stk=[%04x %04x %04x %04x %04x %04x %04x %04x | %04x %04x %04x %04x %04x %04x %04x %04x]\n",
+                    t, tsp,
+                    tstk[0], tstk[1], tstk[2], tstk[3], tstk[4], tstk[5], tstk[6], tstk[7],
+                    tstk[8], tstk[9], tstk[10], tstk[11], tstk[12], tstk[13], tstk[14], tstk[15]);
+        }
+    }
+
+    nv34m_dump_screen_ppm("scratch/live_frame.ppm");
+
     timer_mod(m200_heartbeat_timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 1000);
 }
 
@@ -183,6 +242,25 @@ static void m200_ec_backend_input(void *opaque, M200ECMailbox *mailbox)
             cpu_physical_memory_write(0xfedb9fc4, &flag, 1);
             s->current_cmd = 0;
             s->state = 0;
+        } else if (val == 0x9E) {
+            fprintf(stderr, "[M200 EC BACKEND] CMD 9E (Initiate Drive Detection) -> delivering event 0x10\n");
+            m200_ec_mailbox_set_user_status(mailbox, 0x70);
+            uint8_t a140 = 0;
+            cpu_physical_memory_read(0xfedba140, &a140, 1);
+            a140 |= 0x01;
+            cpu_physical_memory_write(0xfedba140, &a140, 1);
+            s->current_cmd = 0;
+            s->state = 0;
+        } else if (val == 0x9F) {
+            fprintf(stderr, "[M200 EC BACKEND] CMD 9F (Read Drive Detection Result)\n");
+            m200_ec_mailbox_output_byte(mailbox, 0x00);
+            m200_ec_mailbox_set_user_status(mailbox, 0x70);
+            uint8_t flag = 0;
+            cpu_physical_memory_read(0xfedb9fc4, &flag, 1);
+            flag |= 0x02;
+            cpu_physical_memory_write(0xfedb9fc4, &flag, 1);
+            s->current_cmd = 0;
+            s->state = 0;
         }
     } else {
         if (s->current_cmd == 0x90) {
@@ -204,6 +282,10 @@ static void m200_ec_backend_input(void *opaque, M200ECMailbox *mailbox)
             } else if (s->state == 2) {
                 s->ec_regs[s->reg_index] = val;
                 m200_ec_mailbox_set_user_status(mailbox, 0x70);
+                uint8_t flag = 0;
+                cpu_physical_memory_read(0xfedb9fc4, &flag, 1);
+                flag |= 0x02;
+                cpu_physical_memory_write(0xfedb9fc4, &flag, 1);
                 fprintf(stderr, "[M200 EC BACKEND] CMD 91 write reg 0x%02x <- 0x%02x\n", s->reg_index, val);
                 s->current_cmd = 0;
                 s->state = 0;
@@ -342,6 +424,21 @@ static void toshiba_dport_write(void *opaque, hwaddr addr, uint64_t val, unsigne
                                 "   EIP=0x%08x\n"
                                 "============================================================\n",
                         pc_m200_get_cpu_eip());
+                nv34m_dump_screen_ppm("scratch/f113_logo.ppm");
+            } else if (dp->current_code == 0xF11B || dp->current_code == 0xF11D) {
+                fprintf(stderr, "\n>>> [TOSHIBA D-PORT PJ2000] 0x%04X : %s <<<\n",
+                        dp->current_code, dport_code_name(dp->current_code));
+                if (env) {
+                    hwaddr sp_phys = env->segs[R_SS].base + (env->regs[R_ESP] & 0xffff);
+                    fprintf(stderr, "   [%04X STACK DUMP] SP=%04x SS.base=%08x phys=%08x\n",
+                            dp->current_code, (uint16_t)env->regs[R_ESP], (uint32_t)env->segs[R_SS].base, (uint32_t)sp_phys);
+                    for (int i = 0; i < 16; i++) {
+                        uint16_t sval = 0;
+                        cpu_physical_memory_read(sp_phys + i*2, &sval, 2);
+                        fprintf(stderr, "      [SP+%02x] = %04x\n", i*2, sval);
+                    }
+                }
+                nv34m_dump_screen_ppm("scratch/f11d_screen.ppm");
             } else if (dp->current_code == 0xF13E) {
                 fprintf(stderr, "\n>>> [TOSHIBA D-PORT PJ2000] 0x%04X : %s <<<\n",
                         dp->current_code, dport_code_name(dp->current_code));
@@ -773,10 +870,15 @@ typedef struct ToshibaSMBusState {
     uint8_t active_block_data[32];
     uint8_t block_index;
     uint8_t active_block_len;
+    uint8_t block_curr_byte;
     bool transaction_pending;
     bool busy_observed;
     bool trace;
     int64_t scheduled_ns;
+
+    /* ICS950812 Clock Generator (SMBus 0xD2/0xD3) */
+    uint8_t ics_regs[32];
+    uint8_t ics_reg_count;
 } ToshibaSMBusState;
 
 #define M200_SMB_STS_HOST_BUSY 0x01
@@ -784,6 +886,7 @@ typedef struct ToshibaSMBusState {
 #define M200_SMB_STS_DEV_ERR   0x04
 #define M200_SMB_STS_BUS_ERR   0x08
 #define M200_SMB_STS_FAILED    0x10
+#define M200_SMB_STS_BYTE_DONE 0x80
 #define M200_SMB_CNT_INTREN     0x01
 #define M200_SMB_CNT_KILL       0x02
 #define M200_SMB_CNT_START      0x40
@@ -925,7 +1028,7 @@ static uint64_t toshiba_smbus_read(void *opaque, hwaddr addr, unsigned size)
     }
     switch (addr) {
     case 0x00: /* HST_STS */
-        if (s->transaction_pending) {
+        if (s->transaction_pending && ((s->active_cnt >> 2) & 7) != 5) {
             if (s->busy_observed ||
                 qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) >= s->scheduled_ns) {
                 timer_del(s->transaction_timer);
@@ -962,8 +1065,9 @@ static uint64_t toshiba_smbus_read(void *opaque, hwaddr addr, unsigned size)
         break;
     }
     if (s->trace) {
-        fprintf(stderr, ">>> [TOSHIBA SMBUS READ] Port 0x%04X -> 0x%02X\n",
-                (unsigned)(0xD880 + addr), val);
+        fprintf(stderr, ">>> [TOSHIBA SMBUS READ] Port 0x%04X -> 0x%02X (CS:EIP=%04x:%08x)\n",
+                (unsigned)(0xD880 + addr), val,
+                pc_m200_get_cpu_cs(), pc_m200_get_cpu_eip());
     }
     return val;
 }
@@ -981,6 +1085,45 @@ static void toshiba_smbus_write(void *opaque, hwaddr addr, uint64_t val, unsigne
     }
     switch (addr) {
     case 0x00: /* HST_STS (W1C) */
+        if (s->transaction_pending && ((s->active_cnt >> 2) & 7) == 5) {
+            bool read = s->active_slva & 1;
+            uint8_t dev_addr = s->active_slva >> 1;
+
+            if (val & M200_SMB_STS_BYTE_DONE) {
+                s->block_curr_byte++;
+                if (!read) {
+                    /* Block Write */
+                    if (s->block_curr_byte < s->active_block_len - 1) {
+                        /* Ready for next byte from NoteBIOS */
+                        s->hst_sts = M200_SMB_STS_HOST_BUSY | M200_SMB_STS_BYTE_DONE;
+                    } else {
+                        /* All bytes received (byte 0..active_block_len-1) */
+                        if (dev_addr == 0x69) {
+                            memcpy(s->ics_regs, s->block_data_bytes,
+                                   MIN(s->active_block_len, (uint8_t)sizeof(s->ics_regs)));
+                            s->ics_reg_count = s->active_block_len;
+                        } else {
+                            smbus_write_block(s->bus, dev_addr, s->active_cmd,
+                                              s->block_data_bytes,
+                                              s->active_block_len, true);
+                        }
+                        s->hst_sts = M200_SMB_STS_BYTE_DONE | M200_SMB_STS_INTR;
+                        s->transaction_pending = false;
+                    }
+                } else {
+                    /* Block Read */
+                    if (s->block_curr_byte < s->active_block_len) {
+                        s->block_data = s->ics_regs[s->block_curr_byte];
+                        s->hst_sts = M200_SMB_STS_HOST_BUSY | M200_SMB_STS_BYTE_DONE;
+                    } else {
+                        /* Read completed */
+                        s->hst_sts = 0;
+                        s->transaction_pending = false;
+                    }
+                }
+                break;
+            }
+        }
         s->hst_sts &= ~(val & ~M200_SMB_STS_HOST_BUSY & 0xff);
         break;
     case 0x02: /* HST_CNT */
@@ -1010,6 +1153,31 @@ static void toshiba_smbus_write(void *opaque, hwaddr addr, uint64_t val, unsigne
             m200_f108_timing_external(10,
                                       ((uint16_t)s->active_slva << 8) |
                                       s->hst_sts);
+
+            if (((val >> 2) & 7) == 5) {
+                /* Block Write / Block Read byte-by-byte handshake */
+                s->block_curr_byte = 0;
+                bool read = s->active_slva & 1;
+                uint8_t dev_addr = s->active_slva >> 1;
+
+                if (!read) {
+                    /* Block Write: byte 0 already in block_data_bytes[0] */
+                    s->hst_sts = M200_SMB_STS_HOST_BUSY | M200_SMB_STS_BYTE_DONE;
+                } else {
+                    /* Block Read: load byte count & byte 0 */
+                    if (dev_addr == 0x69) {
+                        s->active_block_len = s->ics_reg_count ? s->ics_reg_count : 6;
+                        s->hst_d0 = s->active_block_len;
+                        s->block_data = s->ics_regs[0];
+                        s->hst_sts = M200_SMB_STS_HOST_BUSY | M200_SMB_STS_BYTE_DONE;
+                    } else {
+                        s->active_block_len = 0;
+                        s->hst_sts = M200_SMB_STS_DEV_ERR;
+                        s->transaction_pending = false;
+                    }
+                }
+                break;
+            }
 
             switch ((val >> 2) & 7) {
             case 0: wire_bytes = 1; break; /* quick */
@@ -1665,13 +1833,20 @@ static void m200_init(MachineState *machine)
     m200_ec_mailbox_set_backend(ec_mb, &m200_ec_backend_ops, ec_backend);
 
 
-    /* Port 0x64 KBC Status (SYSF set) */
+    /* Port 0x64 KBC Status (SYSF set - now handled natively by i8042 kbd_reset) */
+    /*
     MemoryRegion *kbc_status_io = g_new(MemoryRegion, 1);
     memory_region_init_io(kbc_status_io, OBJECT(machine), &toshiba_kbc_status_ops, NULL, "m200-kbc-status", 1);
     memory_region_add_subregion_overlap(system_io, 0x64, kbc_status_io, 50);
+    */
 
     /* Intel ICH4-M SMBus Controller (Base 0xD880) */
     ToshibaSMBusState *smbus = g_new0(ToshibaSMBusState, 1);
+    static const uint8_t ics_init_regs[6] = {
+        0xCC, 0x73, 0xB7, 0xC1, 0x31, 0x00
+    };
+    memcpy(smbus->ics_regs, ics_init_regs, sizeof(ics_init_regs));
+    smbus->ics_reg_count = 6;
     smbus->lpc = ICH4M_LPC_DEVICE(lpc);
     smbus->bus = pcms->smbus;
     smbus->trace = getenv("M200_SMBUS_TRACE") != NULL;

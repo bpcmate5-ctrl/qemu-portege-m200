@@ -475,7 +475,7 @@ static void kbd_reset(void *opaque)
     KBDState *s = opaque;
 
     s->mode = KBD_MODE_KBD_INT | KBD_MODE_MOUSE_INT;
-    s->status = KBD_STAT_CMD | KBD_STAT_UNLOCKED;
+    s->status = KBD_STAT_CMD | KBD_STAT_UNLOCKED | KBD_STAT_SELFTEST;
     s->outport = KBD_OUT_RESET | KBD_OUT_A20 | KBD_OUT_ONES;
     s->pending = 0;
     kbd_deassert_irq(s);

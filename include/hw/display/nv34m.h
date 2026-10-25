@@ -30,6 +30,7 @@ void nv34m_log_vga_mem_write(hwaddr addr, unsigned size);
 void nv34m_log_vga_ioport_write(uint32_t addr, uint32_t val);
 void nv34m_log_vga_ioport_read(uint32_t addr, uint32_t val);
 void nv34m_dump_vga_state_snapshot(const char *reason);
+void nv34m_dump_screen_ppm(const char *filename);
 uint32_t pc_m200_get_cpu_eip(void);
 uint32_t pc_m200_get_cpu_cs(void);
 uint32_t pc_m200_get_cpu_cs_base(void);

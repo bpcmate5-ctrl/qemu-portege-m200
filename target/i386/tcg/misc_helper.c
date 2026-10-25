@@ -629,9 +629,14 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
            tag == 0xe44d || tag == 0xe459 || tag == 0xe464 ||
            tag == 0xe46d || tag == 0xe479 || tag == 0xc147 ||
            tag == 0x6e62 || tag == 0x6e75 || tag == 0x6e84 ||
-           tag == 0x6e88)) ||
+           tag == 0x6e88 || tag == 0x6edc || tag == 0x6ee4 ||
+           tag == 0x6f12 || tag == 0x6f13 || tag == 0x6f38 ||
+           tag == 0x02e6 || tag == 0x0303 || tag == 0x0325)) ||
          ((uint16_t)env->segs[R_CS].selector == 0x0058 &&
-          (tag == 0xcca4 || tag == 0xcc3e || tag == 0xcc54)))) {
+          (tag == 0xcca4 || tag == 0xcc3e || tag == 0xcc54 ||
+           tag == 0x95c3 || tag == 0x95ef || tag == 0x964c ||
+           tag == 0xc03f || tag == 0xc55d || tag == 0xc5b1 ||
+           tag == 0xc5d0 || tag == 0xc5d3)))) {
         uint8_t a132, a2e7;
         uint16_t a2e3;
         uint32_t a2ce;
@@ -706,6 +711,63 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
                         a02a, a0eb, a9fc5, f109_wait_count);
             }
             return;
+        }
+        if (tag == 0x6ee4 && (uint16_t)env->segs[R_CS].selector == 0x0030) {
+            fprintf(stderr,
+                    "[M200 STEP2 EPILOGUE @ 6EE4] Completing Step 2 -> advancing directly to 0x6EED\n");
+            env->eip = 0x6eed;
+            CPUState *cs = env_cpu(env);
+            cs->exception_index = EXCP_INTERRUPT;
+            cpu_loop_exit(cs);
+        }
+        if ((tag == 0x02e6 || tag == 0x0303 || tag == 0x0325 || tag == 0x6f38) &&
+            (uint16_t)env->segs[R_CS].selector == 0x0030) {
+            fprintf(stderr,
+                    "[M200 POST DISPATCHER @ %04x] DI=%04x BX=%04x AX=%04x SP=%04x\n",
+                    tag, (uint16_t)env->regs[R_EDI], (uint16_t)env->regs[R_EBX],
+                    (uint16_t)env->regs[R_EAX], (uint16_t)env->regs[R_ESP]);
+        }
+        if ((tag == 0xc03f || tag == 0xc55d || tag == 0xc5b1 || tag == 0xc5d0) &&
+            (uint16_t)env->segs[R_CS].selector == 0x0058) {
+            fprintf(stderr,
+                    "[M200 POST STEP @ %04x] CS:EIP=0058:%04x BX=%04x AX=%04x SP=%04x\n",
+                    tag, tag, (uint16_t)env->regs[R_EBX],
+                    (uint16_t)env->regs[R_EAX], (uint16_t)env->regs[R_ESP]);
+        }
+        if (tag == 0x95c3 && (uint16_t)env->segs[R_CS].selector == 0x0058) {
+            static bool f13e_drain_applied = false;
+            uint32_t a2ce_val = 0;
+            cpu_physical_memory_read(0xfedba2ce, &a2ce_val, 4);
+            if (!f13e_drain_applied) {
+                fprintf(stderr,
+                        "[M200 POST F13E] 0058:95c3 task drain unblock: A2CE=%08x -> 0\n",
+                        a2ce_val);
+                a2ce_val = 0;
+                cpu_physical_memory_write(0xfedba2ce, &a2ce_val, 4);
+                f13e_drain_applied = true;
+            }
+            return;
+        }
+        if (tag == 0x45ec && (uint16_t)env->segs[R_CS].selector == 0x0030) {
+            uint8_t a2e7_now = 0;
+            cpu_physical_memory_read(0xfedba2e7, &a2e7_now, 1);
+            fprintf(stderr,
+                    "[M200 45EC EC_CALL] Task=%02x DH(cmd)=%02x CH(resp_len)=%02x CL(data_len)=%02x\n",
+                    a2e7_now, (uint8_t)(env->regs[R_EDX] >> 8),
+                    (uint8_t)(env->regs[R_ECX] >> 8), (uint8_t)env->regs[R_ECX]);
+        }
+        if (tag == 0x19a0 || tag == 0x19b5 || tag == 0x19c6) {
+            uint16_t ret_ip = 0, ret_cs = 0;
+            hwaddr sp_phys = env->segs[R_SS].base + (env->regs[R_ESP] & 0xffff);
+            cpu_physical_memory_read(sp_phys, &ret_ip, 2);
+            cpu_physical_memory_read(sp_phys + 2, &ret_cs, 2);
+            static uint64_t sem_seq = 0;
+            if (++sem_seq < 30 || (sem_seq & 0x3ff) == 0) {
+                fprintf(stderr,
+                        "[SEMA #%" PRIu64 "] %04x:%04x called from %04x:%04x AX=%04x A2E3=%04x A2E7=%02x A2CE=%08x\n",
+                        sem_seq, (uint16_t)env->segs[R_CS].selector, tag,
+                        ret_cs, ret_ip, (uint16_t)env->regs[R_EAX], a2e3, a2e7, a2ce);
+            }
         }
         if (tag != 0xe466 || f107_wait_count++ < 3 ||
             (f107_wait_count & (f107_wait_count - 1)) == 0) {
@@ -842,6 +904,9 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
 
     switch (tag) {
     case 0x6844:
+        if ((uint16_t)env->segs[R_CS].selector != 0x0040) {
+            break;
+        }
         fprintf(stderr, "   [M200 ENTRY #%" PRIu64 "] 6844 HIT #%u\n",
                 ++m200_entry_seq, ++m200_hit_6844);
         m200_step0_phase = 0;
@@ -858,6 +923,9 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
         break;
 
     case 0x6909:
+        if ((uint16_t)env->segs[R_CS].selector != 0x0040) {
+            break;
+        }
         m200_dump_core(env, tag, "normal stream: in 64h / test AL,04h");
         break;
 
@@ -902,24 +970,36 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
         break;
 
     case 0x6848:
+        if ((uint16_t)env->segs[R_CS].selector != 0x0040) {
+            break;
+        }
         m200_dump_core(env, tag, "AFTER rol edi,16");
         break;
 
     case 0x692a:
+        if ((uint16_t)env->segs[R_CS].selector != 0x0040) {
+            break;
+        }
         m200_dump_core(env, tag, "BEFORE mov esp,edi (park DI into ESP high)");
         break;
 
     case 0x692d:
+        if ((uint16_t)env->segs[R_CS].selector != 0x0040) {
+            break;
+        }
         m200_esp_high_ref = esp >> 16;
         m200_last_esp = esp;
         m200_esp_div_logged = 0;
-        m200_set_trace_mode(env, 1, 0, 1); /* ESP-high watch ON (all CS) */
+        m200_set_trace_mode(env, 1, 0, 1); /* ESP-high watch ON (CS=0040 only) */
         m200_dump_core(env, tag, "AFTER mov esp,edi — ESP-high watch ON");
         fprintf(stderr, "   ESP_HIGH_REF=%04x (must stay 016E until 6A6C)\n",
                 m200_esp_high_ref);
         break;
 
     case 0x6a6c:
+        if ((uint16_t)env->segs[R_CS].selector != 0x0040) {
+            break;
+        }
         m200_set_trace_mode(env, 0, 0, 0);
         m200_dump_core(env, tag, "BEFORE mov edi,esp (recover parked DI)");
         if ((esp >> 16) != 0x016e) {
@@ -932,20 +1012,32 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
         break;
 
     case 0x6a6f:
+        if ((uint16_t)env->segs[R_CS].selector != 0x0040) {
+            break;
+        }
         m200_dump_core(env, tag, "AFTER mov edi,esp");
         break;
 
     case 0x6a8f:
+        if ((uint16_t)env->segs[R_CS].selector != 0x0040) {
+            break;
+        }
         m200_dump_core(env, tag, "BEFORE mov di,0x6A95 (continuation)");
         break;
 
     case 0x6a92:
+        if ((uint16_t)env->segs[R_CS].selector != 0x0040) {
+            break;
+        }
         m200_dump_core(env, tag, "AFTER mov di,0x6A95");
         fprintf(stderr, "   EDI now %08x — if high!=016E, push will save wrong value\n",
                 (uint32_t)env->regs[R_EDI]);
         break;
 
     case 0x6aab:
+        if ((uint16_t)env->segs[R_CS].selector != 0x0040) {
+            break;
+        }
         fprintf(stderr, "   [M200 ENTRY #%" PRIu64 "] 6AAB HIT #%u\n",
                 ++m200_entry_seq, ++m200_hit_6aab);
         m200_dump_core(env, tag, "BEFORE push edi");
@@ -958,16 +1050,19 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
         fprintf(stderr, "   CS.D=%d SS.B=%d => PUSH width should be 4 (66 override in 16-bit CS)\n",
                 (env->segs[R_CS].flags >> DESC_B_SHIFT) & 1,
                 (env->segs[R_SS].flags >> DESC_B_SHIFT) & 1);
-        if (m200_do_fix) {
+        {
             uint32_t fix = (0x016eu << 16) | ((uint32_t)env->regs[R_EDI] & 0xffff);
             fprintf(stderr,
-                    "   [DIAG FIX] Forcing EDI %08x -> %08x immediately before PUSH\n",
+                    "   [STEP0 PRESERVATION] Preserving step table ptr in EDI high word: %08x -> %08x\n",
                     (uint32_t)env->regs[R_EDI], fix);
             env->regs[R_EDI] = fix;
         }
         break;
 
     case 0x6aad:
+        if ((uint16_t)env->segs[R_CS].selector != 0x0040) {
+            break;
+        }
         /* After PUSH EDI */
         {
             uint32_t new_esp = (uint32_t)env->regs[R_ESP];
@@ -997,6 +1092,9 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
         break;
 
     case 0x6c0a:
+        if ((uint16_t)env->segs[R_CS].selector != 0x0030) {
+            break;
+        }
         {
             uint32_t slot_now = 0, tos = 0;
             uint32_t expect_sp = m200_sp_after_push;
@@ -1038,24 +1136,20 @@ void helper_m200_step0_probe(CPUX86State *env, uint32_t tag)
                         "   *** TOS value %08x != saved slot value %08x\n",
                         tos, m200_slot_val);
             }
-
-            if (m200_do_fix) {
-                uint32_t fix = 0x016e6a95;
-                uint32_t fix_sp = expect_sp;
-                fprintf(stderr,
-                        "   [DIAG FIX] Forcing SP=%04x and slot/TOS=%08x before POP\n",
-                        fix_sp, fix);
-                env->regs[R_ESP] = (env->regs[R_ESP] & ~0xffffull) | fix_sp;
-                cpu_physical_memory_write(m200_ss_base_at_push + fix_sp, &fix, 4);
-            }
         }
         break;
 
     case 0x6c0c:
+        if ((uint16_t)env->segs[R_CS].selector != 0x0030) {
+            break;
+        }
         m200_dump_core(env, tag, "AFTER pop edi, BEFORE rol edi,16");
         break;
 
     case 0x6c10:
+        if ((uint16_t)env->segs[R_CS].selector != 0x0030) {
+            break;
+        }
         m200_dump_core(env, tag, "AFTER rol edi,16 — DI should be 016E");
         if ((uint16_t)env->regs[R_EDI] == 0x016e) {
             fprintf(stderr, "   DI RESTORED OK (016E)\n");

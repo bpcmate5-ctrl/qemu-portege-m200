@@ -3596,7 +3596,7 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         uint32_t ip16 = (uint32_t)dc->base.pc_next & 0xffff;
 
         switch (ip16) {
-        case 0x4526: case 0x4534: case 0x454e: case 0xc489: case 0xc4b7:
+        case 0x4526: case 0x4534: case 0x454e: case 0x45ec: case 0xc489: case 0xc4b7:
         case 0xc4bc: case 0xc4c2: case 0xc4ef: case 0xc4f7:
         case 0xc4fa: case 0xc504:
         case 0x8b1b: case 0x8b20: case 0x8b23:
@@ -3612,6 +3612,8 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
         case 0x2880: case 0x2890: case 0x2895: case 0x28a9: case 0x28dd:
         case 0x28e6: case 0x28e7: case 0x29bb: case 0x29f5:
         case 0x6e62: case 0x6e75: case 0x6e84: case 0x6e88:
+        case 0x6edc: case 0x6ee4: case 0x6f12: case 0x6f13: case 0x6f38:
+        case 0x02e6: case 0x0303: case 0x0325:
             if (m200_f108_timing) {
                 translator_io_start(&dc->base);
             }
@@ -3629,6 +3631,8 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
 
         switch (ip16) {
         case 0xcca4: case 0xcc3e: case 0xcc54:
+        case 0x95c3: case 0x95ef: case 0x964c:
+        case 0xc03f: case 0xc55d: case 0xc5b1: case 0xc5d0: case 0xc5d3:
             if (m200_f108_timing) {
                 translator_io_start(&dc->base);
             }
