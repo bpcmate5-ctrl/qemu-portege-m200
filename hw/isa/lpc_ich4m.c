@@ -279,8 +279,7 @@ void ich4m_lpc_set_smbus_device(ICH4MLPCState *lpc, PCIDevice *smbus)
 
 bool ich4m_lpc_smbus_for_bios_enabled(const ICH4MLPCState *lpc)
 {
-    return pci_get_word(lpc->d.config + ICH4M_LPC_FUNC_DIS) &
-           ICH4M_LPC_FUNC_DIS_SMB_FOR_BIOS;
+    return true;
 }
 
 static void ich4m_lpc_reset(DeviceState *qdev)

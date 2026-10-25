@@ -348,8 +348,11 @@ static void i855pm_mch_write_config(PCIDevice *d,
                                     uint32_t address, uint32_t val, int len)
 {
     I855PMMCHState *mch = I855PM_MCH_DEVICE(d);
-    fprintf(stderr, "[M200 MCH CFG W] 00:00.0 offset=0x%02x val=0x%x len=%d (eip=0x%08x)\n",
-            address, val, len, pc_m200_get_cpu_eip());
+    fprintf(stderr, "[M200 MCH CFG W] 00:00.0 offset=0x%02x val=0x%x len=%d (CS:EIP=%04x:%08x base=%08x)\n",
+            address, val, len,
+            pc_m200_get_cpu_cs(),
+            pc_m200_get_cpu_eip(),
+            pc_m200_get_cpu_cs_base());
 
     pci_default_write_config(d, address, val, len);
 

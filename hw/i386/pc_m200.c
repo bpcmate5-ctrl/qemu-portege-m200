@@ -65,12 +65,46 @@ uint32_t pc_m200_get_cpu_eip(void)
     return 0;
 }
 
+uint32_t pc_m200_get_cpu_cs(void)
+{
+    CPUState *cpu = current_cpu ? current_cpu : first_cpu;
+    if (cpu) {
+        X86CPU *x86_cpu = X86_CPU(cpu);
+        return x86_cpu->env.segs[R_CS].selector;
+    }
+    return 0;
+}
+
+uint32_t pc_m200_get_cpu_cs_base(void)
+{
+    CPUState *cpu = current_cpu ? current_cpu : first_cpu;
+    if (cpu) {
+        X86CPU *x86_cpu = X86_CPU(cpu);
+        return x86_cpu->env.segs[R_CS].base;
+    }
+    return 0;
+}
+
 void *pc_m200_get_high_smram_ptr(void)
 {
     if (g_high_smram) {
         return memory_region_get_ram_ptr(g_high_smram);
     }
     return NULL;
+}
+
+static QEMUTimer *m200_heartbeat_timer = NULL;
+static int m200_heartbeat_sec = 0;
+
+static void m200_heartbeat_cb(void *opaque)
+{
+    m200_heartbeat_sec++;
+    fprintf(stderr, "[M200 HEARTBEAT #%d] CS:EIP=%04x:%08x base=%08x\n",
+            m200_heartbeat_sec,
+            pc_m200_get_cpu_cs(),
+            pc_m200_get_cpu_eip(),
+            pc_m200_get_cpu_cs_base());
+    timer_mod(m200_heartbeat_timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 1000);
 }
 
 static uint64_t toshiba_m200_io_read(void *opaque, hwaddr addr, unsigned size)
@@ -269,9 +303,9 @@ static void toshiba_dport_write(void *opaque, hwaddr addr, uint64_t val, unsigne
             dp->current_code = (dp->current_code << 8) | (val & 0xff);
             dp->byte_count = 0;
             CPUState *cpu = first_cpu;
+            CPUX86State *env = NULL;
             if (cpu) {
                 X86CPU *x86_cpu = X86_CPU(cpu);
-                CPUX86State *env;
 
                 cpu_synchronize_state(cpu);
                 env = &x86_cpu->env;
@@ -308,6 +342,19 @@ static void toshiba_dport_write(void *opaque, hwaddr addr, uint64_t val, unsigne
                                 "   EIP=0x%08x\n"
                                 "============================================================\n",
                         pc_m200_get_cpu_eip());
+            } else if (dp->current_code == 0xF13E) {
+                fprintf(stderr, "\n>>> [TOSHIBA D-PORT PJ2000] 0x%04X : %s <<<\n",
+                        dp->current_code, dport_code_name(dp->current_code));
+                if (env) {
+                    hwaddr sp_phys = env->segs[R_SS].base + (env->regs[R_ESP] & 0xffff);
+                    fprintf(stderr, "   [F13E STACK DUMP] SP=%04x SS.base=%08x phys=%08x\n",
+                            (uint16_t)env->regs[R_ESP], (uint32_t)env->segs[R_SS].base, (uint32_t)sp_phys);
+                    for (int i = 0; i < 16; i++) {
+                        uint16_t sval = 0;
+                        cpu_physical_memory_read(sp_phys + i*2, &sval, 2);
+                        fprintf(stderr, "      [SP+%02x] = %04x\n", i*2, sval);
+                    }
+                }
             } else {
                 fprintf(stderr, "\n>>> [TOSHIBA D-PORT PJ2000] 0x%04X : %s <<<\n",
                         dp->current_code, dport_code_name(dp->current_code));
@@ -878,6 +925,13 @@ static uint64_t toshiba_smbus_read(void *opaque, hwaddr addr, unsigned size)
     }
     switch (addr) {
     case 0x00: /* HST_STS */
+        if (s->transaction_pending) {
+            if (s->busy_observed ||
+                qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) >= s->scheduled_ns) {
+                timer_del(s->transaction_timer);
+                m200_smbus_transaction_complete(s);
+            }
+        }
         val = s->hst_sts;
         if ((val & M200_SMB_STS_HOST_BUSY) && !s->busy_observed) {
             s->busy_observed = true;
@@ -1285,7 +1339,7 @@ static void m200_init(MachineState *machine)
         pci_set_word(smb->config + PCI_SUBSYSTEM_ID, 0x0001);
         ich4m_lpc_set_smbus_device(ICH4M_LPC_DEVICE(lpc), smb);
         pcms->smbus = I2C_BUS(qdev_get_child_bus(DEVICE(smb), "i2c"));
-        smbus_eeprom_init(pcms->smbus, 8, ddr_spd_dimm0,
+        smbus_eeprom_init(pcms->smbus, 1, ddr_spd_dimm0,
                           sizeof(ddr_spd_dimm0));
         m200_smbus_create_board_devices(pcms->smbus);
     }
@@ -1627,6 +1681,10 @@ static void m200_init(MachineState *machine)
     MemoryRegion *smbus_io = g_new(MemoryRegion, 1);
     memory_region_init_io(smbus_io, OBJECT(machine), &toshiba_smbus_ops, smbus, "m200-smbus", 0x20);
     memory_region_add_subregion_overlap(system_io, 0xd880, smbus_io, 100);
+
+    /* Real-time Heartbeat Diagnostic Timer */
+    m200_heartbeat_timer = timer_new_ms(QEMU_CLOCK_REALTIME, m200_heartbeat_cb, NULL);
+    timer_mod(m200_heartbeat_timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 1000);
 
     qemu_register_reset(pc_m200_reset_handler, x86ms);
 }

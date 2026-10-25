@@ -55,7 +55,7 @@ struct ICH4MLPCState {
 #define ICH4M_LPC_PMBASE                 0x40
 #define ICH4M_LPC_PMBASE_BASE_ADDRESS_MASK   0xff80
 #define ICH4M_LPC_PMBASE_RTE             0x1
-#define ICH4M_LPC_PMBASE_DEFAULT         0x1
+#define ICH4M_LPC_PMBASE_DEFAULT         0xd801
 
 #define ICH4M_LPC_ACPI_CTRL              0x44
 #define ICH4M_LPC_ACPI_CTRL_ACPI_EN      0x10  /* Bit 4 on ICH4-M */
@@ -64,7 +64,7 @@ struct ICH4MLPCState {
 #define ICH4M_LPC_ACPI_CTRL_10           0x1
 #define ICH4M_LPC_ACPI_CTRL_11           0x2
 #define ICH4M_LPC_ACPI_CTRL_20           0x4
-#define ICH4M_LPC_ACPI_CTRL_DEFAULT      0x0
+#define ICH4M_LPC_ACPI_CTRL_DEFAULT      ICH4M_LPC_ACPI_CTRL_ACPI_EN
 
 #define ICH4M_LPC_GPIOBASE               0x58
 #define ICH4M_LPC_GPIOBASE_DEFAULT       0x1
