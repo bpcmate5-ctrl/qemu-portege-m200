@@ -1,0 +1,25 @@
+;
+; BENCH GENERATOR ONLY.  Never connect this firmware to a motherboard.
+; Each FIFO word contains four chronological 8-bit half-cycle symbols.
+; GPIO2..5=LAD, GPIO6=LFRAME#, GPIO7=LCLK, GPIO8..9=0.
+;
+.program lpc_generator
+.wrap_target
+    out pins, 8
+.wrap
+
+% c-sdk {
+static inline void lpc_generator_program_init(PIO pio, uint sm, uint offset,
+                                              float clkdiv)
+{
+    pio_sm_config c = lpc_generator_program_get_default_config(offset);
+    sm_config_set_out_pins(&c, 2, 8);
+    sm_config_set_out_shift(&c, true, true, 32);
+    sm_config_set_clkdiv(&c, clkdiv);
+    for (uint gpio = 2; gpio <= 9; gpio++) {
+        pio_gpio_init(pio, gpio);
+    }
+    pio_sm_set_consecutive_pindirs(pio, sm, 2, 8, true);
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

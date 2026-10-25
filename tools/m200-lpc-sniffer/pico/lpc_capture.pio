@@ -1,0 +1,36 @@
+;
+; Two simultaneous samples bracket every LPC rising edge.  The low-phase
+; sample is the protocol value (LPC receivers sample on the rising edge); the
+; high-phase sample permits independent phase/alignment validation.
+;
+; IN base covers GPIO2..GPIO9:
+;   GPIO2..5 LAD0..3, GPIO6 LFRAME#, GPIO7 LCLK, GPIO8..9 reserved.
+; WAIT uses absolute GPIO numbers.  The program contains no SET, OUT,
+; side-set, or pin-direction instruction and therefore cannot drive a pin.
+;
+.program lpc_capture
+
+    wait 0 gpio 6          ; arm on an asserted LFRAME#
+.wrap_target
+    wait 0 gpio 7          ; observe low half-cycle
+    in pins, 8             ; stable value immediately before rising edge
+    wait 1 gpio 7          ; synchronize to rising LCLK
+    in pins, 8             ; post-edge validation sample
+.wrap
+
+% c-sdk {
+static inline void lpc_capture_program_init(PIO pio, uint sm, uint offset)
+{
+    pio_sm_config c = lpc_capture_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, 2);
+    sm_config_set_in_shift(&c, true, true, 32);
+    sm_config_set_clkdiv(&c, 1.0f);
+
+    for (uint gpio = 2; gpio <= 9; gpio++) {
+        pio_gpio_init(pio, gpio);
+        gpio_set_pulls(gpio, false, false);
+    }
+    pio_sm_set_consecutive_pindirs(pio, sm, 2, 8, false);
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}
