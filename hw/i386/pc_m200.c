@@ -946,8 +946,6 @@ typedef struct ToshibaSMBusState {
 #define M200_SMBUS_START_HOLD_NS   4000ULL
 #define M200_SMBUS_STOP_SETUP_NS   4000ULL
 
-static const uint8_t ddr_spd_dimm0[128];
-
 static uint64_t m200_smbus_wire_time_ns(unsigned bytes)
 {
     return M200_SMBUS_START_HOLD_NS +
@@ -1028,40 +1026,61 @@ static void m200_smbus_transaction_complete(void *opaque)
     }
 }
 
-static const uint8_t ddr_spd_dimm0[128] = {
-    [0] = 0x80, /* 128 bytes */
-    [1] = 0x08, /* Rev 1.0 */
-    [2] = 0x07, /* DDR SDRAM */
-    [3] = 0x0d, /* 13 rows */
-    [4] = 0x0a, /* 10 cols */
-    [5] = 0x01, /* 1 bank/rank */
-    [6] = 0x40, /* 64-bit data width */
-    [7] = 0x00,
-    [8] = 0x04, /* 2.5V */
-    [9] = 0x60, /* 6.0 ns (DDR-333) */
-    [10] = 0x70, /* 0.70 ns */
-    [11] = 0x00, /* Non-ECC */
-    [12] = 0x82,
-    [13] = 0x08,
-    [14] = 0x00,
-    [15] = 0x01,
-    [16] = 0x0e,
-    [17] = 0x04,
-    [18] = 0x1c, /* CAS 2.0, 2.5, 3.0 */
-    [19] = 0x01,
-    [20] = 0x02,
-    [21] = 0x20,
-    [22] = 0x00,
-    [23] = 0x60, /* tCK at CAS 2.0 = 6.0 ns (DDR-333) */
-    [24] = 0x70, /* tAC at CAS 2.0 = 0.70 ns */
-    [25] = 0x60, /* tCK at CAS 1.5 = 6.0 ns (DDR-333) */
-    [26] = 0x70, /* tAC at CAS 1.5 = 0.70 ns */
-    [27] = 0x30, /* tRP 12ns */
-    [28] = 0x30, /* tRCD 12ns */
-    [29] = 0x28, /* tRAS 40ns */
-    [30] = 0x1e, /* tRAS min 30ns */
-    [31] = 0x40, /* 512MB */
-};
+static void m200_generate_ddr_spd(uint8_t *spd, ram_addr_t dimm_size)
+{
+    memset(spd, 0, 256);
+    spd[0] = 0x80; /* 128 bytes written */
+    spd[1] = 0x08; /* 256 bytes total EEPROM size (2^8) */
+    spd[2] = 0x07; /* DDR SDRAM */
+
+    /* Rows, Cols, Ranks, Density matching NoteBIOS table at 0x7e000 / 0x30f80 */
+    if (dimm_size <= 256 * MiB) {
+        /* 256 MB: 13 rows, 10 cols, 4 banks, 1 rank (table 0x0da4 -> 0x0308 = 256MB) */
+        spd[3] = 13;    /* Rows */
+        spd[4] = 10;    /* Cols */
+        spd[5] = 1;     /* 1 Rank */
+        spd[31] = 0x40; /* 256 MB per rank */
+    } else if (dimm_size <= 512 * MiB) {
+        /* 512 MB: 13 rows, 10 cols, 4 banks, 2 ranks (2 x 256 MB = 512 MB) */
+        spd[3] = 13;    /* Rows */
+        spd[4] = 10;    /* Cols */
+        spd[5] = 2;     /* 2 Ranks */
+        spd[31] = 0x40; /* 256 MB per rank */
+    } else {
+        /* 1024 MB (1 GB): 13 rows, 11 cols, 4 banks, 2 ranks (2 x 512 MB = 1024 MB)
+         * (table 0x0db4 -> 0x0410 = 512MB per rank) */
+        spd[3] = 13;    /* Rows */
+        spd[4] = 11;    /* Cols */
+        spd[5] = 2;     /* 2 Ranks */
+        spd[31] = 0x80; /* 512 MB per rank */
+    }
+
+    spd[6] = 0x40; /* 64-bit module data width */
+    spd[7] = 0x00;
+    spd[8] = 0x04; /* 2.5V SSTL */
+    spd[9] = 0x60; /* tCK max CAS = 6.0 ns (DDR-333) */
+    spd[10] = 0x70; /* tAC = 0.70 ns */
+    spd[11] = 0x00; /* Non-ECC */
+    spd[12] = 0x82; /* Refresh rate */
+    spd[13] = 0x08; /* SDRAM device data width = 8 bits */
+    spd[14] = 0x00;
+    spd[15] = 0x01;
+    spd[16] = 0x0e;
+    spd[17] = 0x04; /* 4 banks per chip (REQUIRED by NoteBIOS!) */
+    spd[18] = 0x1c; /* CAS 2.0, 2.5, 3.0 supported */
+    spd[19] = 0x01;
+    spd[20] = 0x02;
+    spd[21] = 0x20; /* SDRAM module attributes (must have bit 0, 1, 3, 4 cleared) */
+    spd[22] = 0x00;
+    spd[23] = 0x60; /* tCK at CAS 2.0 = 6.0 ns */
+    spd[24] = 0x70; /* tAC at CAS 2.0 = 0.70 ns */
+    spd[25] = 0x60;
+    spd[26] = 0x70;
+    spd[27] = 0x30; /* tRP = 12 ns */
+    spd[28] = 0x30; /* tRCD = 12 ns */
+    spd[29] = 0x28; /* tRAS = 40 ns */
+    spd[30] = 0x1e; /* tRAS min = 30 ns */
+}
 
 static uint64_t toshiba_smbus_read(void *opaque, hwaddr addr, unsigned size)
 {
@@ -1494,16 +1513,23 @@ static void m200_init(MachineState *machine)
         /* Base memory: 640 KB */
         mc146818rtc_set_cmos_data(rtc_s, 0x15, 640 & 0xff);
         mc146818rtc_set_cmos_data(rtc_s, 0x16, 640 >> 8);
-        /* Extended memory: 511 MB */
-        int ext_mem = (512 * 1024 - 1024); /* in KB */
+        /* Extended memory in KB (between 1MB and 16MB) */
+        uint64_t low_mem_bytes = x86ms->below_4g_mem_size;
+        int ext_mem = (low_mem_bytes > 1 * MiB) ?
+            (int)((MIN(low_mem_bytes, 16 * MiB) - 1 * MiB) / 1024) : 0;
         if (ext_mem > 65535) ext_mem = 65535;
         mc146818rtc_set_cmos_data(rtc_s, 0x17, ext_mem & 0xff);
         mc146818rtc_set_cmos_data(rtc_s, 0x18, ext_mem >> 8);
         mc146818rtc_set_cmos_data(rtc_s, 0x30, ext_mem & 0xff);
         mc146818rtc_set_cmos_data(rtc_s, 0x31, ext_mem >> 8);
-        /* Memory above 16MB: 496 MB (in 64KB blocks -> 7936 = 0x1F00) */
-        mc146818rtc_set_cmos_data(rtc_s, 0x34, 0x00);
-        mc146818rtc_set_cmos_data(rtc_s, 0x35, 0x1f);
+        /* Memory above 16MB in 64KB blocks (CMOS 0x34/0x35) */
+        uint32_t mem_above_16m_64k = 0;
+        if (low_mem_bytes > 16 * MiB) {
+            mem_above_16m_64k = (uint32_t)((low_mem_bytes - 16 * MiB) / (64 * 1024));
+            if (mem_above_16m_64k > 65535) mem_above_16m_64k = 65535;
+        }
+        mc146818rtc_set_cmos_data(rtc_s, 0x34, mem_above_16m_64k & 0xff);
+        mc146818rtc_set_cmos_data(rtc_s, 0x35, mem_above_16m_64k >> 8);
         /* Hard drive type: Primary Master present (0xF0) */
         mc146818rtc_set_cmos_data(rtc_s, 0x12, 0xf0);
         /* Equipment byte: 80x25 color, 1 FDD, FPU */
@@ -1552,8 +1578,25 @@ static void m200_init(MachineState *machine)
         pci_set_word(smb->config + PCI_SUBSYSTEM_ID, 0x0001);
         ich4m_lpc_set_smbus_device(ICH4M_LPC_DEVICE(lpc), smb);
         pcms->smbus = I2C_BUS(qdev_get_child_bus(DEVICE(smb), "i2c"));
-        smbus_eeprom_init(pcms->smbus, 1, ddr_spd_dimm0,
-                          sizeof(ddr_spd_dimm0));
+        ram_addr_t dimm0_size;
+        ram_addr_t dimm1_size;
+        if (machine->ram_size <= 1024 * MiB) {
+            dimm0_size = machine->ram_size;
+            dimm1_size = 0;
+        } else {
+            dimm0_size = 1024 * MiB;
+            dimm1_size = MIN(machine->ram_size - 1024 * MiB, 1024 * MiB);
+        }
+
+        uint8_t *spd_dimm0 = g_malloc0(256);
+        m200_generate_ddr_spd(spd_dimm0, dimm0_size);
+        smbus_eeprom_init_one(pcms->smbus, 0x50, spd_dimm0);
+
+        if (dimm1_size > 0) {
+            uint8_t *spd_dimm1 = g_malloc0(256);
+            m200_generate_ddr_spd(spd_dimm1, dimm1_size);
+            smbus_eeprom_init_one(pcms->smbus, 0x51, spd_dimm1);
+        }
         m200_smbus_create_board_devices(pcms->smbus);
     }
 
@@ -1932,6 +1975,11 @@ static void m200_machine_options(MachineClass *m)
     m->max_cpus = 1; /* Single-core Pentium M */
 }
 
+static GlobalProperty m200_compat_props[] = {
+    { "ps2-kbd", "compact-nav-keys", "true" },
+    { "i8042", "compact-nav-keys", "true" },
+};
+
 static void m200_machine_class_init(ObjectClass *oc, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
@@ -1939,6 +1987,8 @@ static void m200_machine_class_init(ObjectClass *oc, const void *data)
     mc->init = m200_init;
     mc->default_ram_size = 512 * MiB;
     mc->default_ram_id = "portege_m200.ram";
+    compat_props_add(mc->compat_props, m200_compat_props,
+                     G_N_ELEMENTS(m200_compat_props));
 
     m200_machine_options(mc);
 }

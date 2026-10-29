@@ -81,7 +81,7 @@ static void i855pm_host_get_pci_hole_start(Object *obj, Visitor *v,
     uint32_t value;
 
     val64 = range_is_empty(&s->mch.pci_hole)
-        ? 0 : range_lob(&s->mch.pci_hole);
+        ? 0x80000000ULL : range_lob(&s->mch.pci_hole);
     value = val64;
     assert(value == val64);
     visit_type_uint32(v, name, &value, errp);
@@ -372,10 +372,12 @@ static void i855pm_mch_update(I855PMMCHState *mch)
     i855pm_mch_update_smram(mch);
 
     /*
-     * pci hole goes from end-of-low-ram to io-apic.
+     * pci hole goes from end-of-low-ram (enforcing 2GB minimum base to prevent
+     * collisions with low DRAM and match authentic 855PM hardware) to io-apic.
      */
+    uint64_t pci_hole_start = MAX((uint64_t)mch->below_4g_mem_size, 0x80000000ULL);
     range_set_bounds(&mch->pci_hole,
-                     mch->below_4g_mem_size,
+                     pci_hole_start,
                      IO_APIC_DEFAULT_ADDRESS - 1);
 }
 
@@ -415,10 +417,11 @@ static void i855pm_mch_reset(DeviceState *qdev)
     d->config[I855PM_HOST_BRIDGE_DRA + 1] = 0x04;
     memset(d->wmask + I855PM_HOST_BRIDGE_DRA, 0xff, I855PM_HOST_BRIDGE_DRA_SIZE);
 
-    /* TOM is derived from installed low memory; 2 GiB therefore reads 8000h. */
+    /* TOM is derived from installed low memory; 2 GiB therefore reads 8000h.
+     * NoteBIOS writes to TOM during memory sizing, so wmask must be 0xffff. */
     pci_set_word(d->config + I855PM_HOST_BRIDGE_TOM,
                  MIN(mch->below_4g_mem_size >> 16, UINT16_MAX));
-    pci_set_word(d->wmask + I855PM_HOST_BRIDGE_TOM, 0x0000);
+    pci_set_word(d->wmask + I855PM_HOST_BRIDGE_TOM, 0xffff);
 
     /* Initialize PAM registers and write masks (Default 0x00: Reads from ROM) */
     memset(d->config + I855PM_HOST_BRIDGE_PAM0, 0x00, I855PM_HOST_BRIDGE_PAM_SIZE);

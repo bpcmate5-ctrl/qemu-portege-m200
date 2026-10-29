@@ -844,6 +844,8 @@ static void i8042_initfn(Object *obj)
     object_initialize_child(obj, "ps2kbd", &s->ps2kbd, TYPE_PS2_KBD_DEVICE);
     object_initialize_child(obj, "ps2mouse", &s->ps2mouse,
                             TYPE_PS2_MOUSE_DEVICE);
+    object_property_add_alias(obj, "compact-nav-keys", OBJECT(&s->ps2kbd),
+                             "compact-nav-keys");
 
     qdev_init_gpio_out_named(DEVICE(obj), &s->a20_out, I8042_A20_LINE, 1);
 

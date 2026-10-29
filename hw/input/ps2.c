@@ -26,6 +26,7 @@
 #include "qemu/log.h"
 #include "hw/core/irq.h"
 #include "hw/core/sysbus.h"
+#include "hw/core/qdev-properties.h"
 #include "hw/input/ps2.h"
 #include "migration/vmstate.h"
 #include "ui/console.h"
@@ -410,6 +411,25 @@ static void ps2_keyboard_event(DeviceState *dev, QemuConsole *src,
                 keycode = qemu_input_map_qcode_to_atset1[qcode];
             }
             if (keycode) {
+                if (s->compact_nav_keys && (keycode & 0xff00) == 0xe000) {
+                    /* Strip 0xE0 prefix for navigation keys on compact laptop keyboards */
+                    switch (keycode & 0xff) {
+                    case 0x48: /* Up */
+                    case 0x50: /* Down */
+                    case 0x4b: /* Left */
+                    case 0x4d: /* Right */
+                    case 0x47: /* Home */
+                    case 0x4f: /* End */
+                    case 0x49: /* PgUp */
+                    case 0x51: /* PgDn */
+                    case 0x52: /* Insert */
+                    case 0x53: /* Delete */
+                        keycode &= 0xff;
+                        break;
+                    default:
+                        break;
+                    }
+                }
                 if (keycode & 0xff00) {
                     ps2_put_keycode(s, keycode >> 8);
                 }
@@ -508,6 +528,25 @@ static void ps2_keyboard_event(DeviceState *dev, QemuConsole *src,
                 keycode = qemu_input_map_qcode_to_atset2[qcode];
             }
             if (keycode) {
+                if (s->compact_nav_keys && (keycode & 0xff00) == 0xe000) {
+                    /* Strip 0xE0 prefix for navigation keys on compact laptop keyboards */
+                    switch (keycode & 0xff) {
+                    case 0x75: /* Up */
+                    case 0x72: /* Down */
+                    case 0x6b: /* Left */
+                    case 0x74: /* Right */
+                    case 0x6c: /* Home */
+                    case 0x69: /* End */
+                    case 0x7d: /* PgUp */
+                    case 0x7a: /* PgDn */
+                    case 0x70: /* Insert */
+                    case 0x71: /* Delete */
+                        keycode &= 0xff;
+                        break;
+                    default:
+                        break;
+                    }
+                }
                 if (keycode & 0xff00) {
                     ps2_put_keycode(s, keycode >> 8);
                 }
@@ -1254,6 +1293,10 @@ static void ps2_mouse_realize(DeviceState *dev, Error **errp)
     qemu_input_handler_register(dev, &ps2_mouse_handler);
 }
 
+static const Property ps2_kbd_properties[] = {
+    DEFINE_PROP_BOOL("compact-nav-keys", PS2KbdState, compact_nav_keys, false),
+};
+
 static void ps2_kbd_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -1263,6 +1306,7 @@ static void ps2_kbd_class_init(ObjectClass *klass, const void *data)
     dc->realize = ps2_kbd_realize;
     resettable_class_set_parent_phases(rc, NULL, ps2_kbd_reset_hold, NULL,
                                        &ps2dc->parent_phases);
+    device_class_set_props(dc, ps2_kbd_properties);
     dc->vmsd = &vmstate_ps2_keyboard;
 }
 

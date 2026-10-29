@@ -1147,6 +1147,19 @@ void nv34m_dump_screen_ppm(const char *filename)
         int height = 400;
         fprintf(stderr, "[NV34M DUMP SCREEN] TEXT MODE 80x25 file=%s res=%dx%d start_addr=%05x\n",
                 filename, width, height, start_addr);
+        for (int r = 0; r < 25; r++) {
+            char tline[81];
+            bool has_text = false;
+            for (int c = 0; c < 80; c++) {
+                uint8_t ch = vga->vram_ptr[start_addr + (r * 80 + c) * 4];
+                tline[c] = (ch >= 0x20 && ch < 0x7f) ? ch : ' ';
+                if (ch > 0x20 && ch < 0x7f) has_text = true;
+            }
+            tline[80] = '\0';
+            if (has_text) {
+                fprintf(stderr, "[NV34M TEXT r%02d] %s\n", r, tline);
+            }
+        }
         fprintf(fp, "P6\n%d %d\n255\n", width, height);
 
         for (int y = 0; y < height; y++) {
